@@ -28,6 +28,7 @@ public:
     Board board;
     int gamesPlayed = 0;
 
+    Engine() { reset(); }
     void reset();
     GameState getFullState() const;
     GameResult getResult() const;

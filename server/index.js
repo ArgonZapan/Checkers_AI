@@ -17,14 +17,16 @@ const { cppFetch, delay, SimpleRateLimiter, WsRateLimiter, sanitizeStatePayload 
 const app = express();
 const server = http.createServer(app);
 
-// Security headers
+// Security headers (relaxed for HTTP/LAN access)
 app.use(helmet({
-  xFrameOptions: { action: 'deny' },
-  contentSecurityPolicy: { directives: { defaultSrc: ["'self'"] } }
+  xFrameOptions: { action: 'sameorigin' },
+  crossOriginOpenerPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  contentSecurityPolicy: false
 }));
 
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  origin: process.env.CORS_ORIGIN || true,
   credentials: true
 }));
 
@@ -41,7 +43,7 @@ if (fs.existsSync(distPath)) {
 // Socket.IO
 const io = new Server(server, {
   cors: {
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    origin: process.env.CORS_ORIGIN || true,
     methods: ['GET', 'POST']
   },
   pingTimeout: 60000,
