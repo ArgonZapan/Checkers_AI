@@ -31,38 +31,57 @@ function delay(ms) {
 }
 
 /**
- * Compute reward for DQN training based on strategy weights
+ * Compute reward for DQN training based on CHANGE in position after a move
  */
-function computeReward(strategyName, board, move, config) {
+function computeReward(strategyName, boardBefore, boardAfter, move, config, gameOver = false, won = false) {
   const strat = config.ai.strategies[strategyName];
   if (!strat || strat.type === 'minimax') return 0;
 
   const w = strat.weights;
   const r = strat;
 
-  let reward = 0;
-
-  // Material count
-  let myMaterial = 0, oppMaterial = 0;
-  for (const cell of board) {
-    if (cell === 1) myMaterial += 1.0; // my pawn
-    else if (cell === 2) myMaterial += 3.0; // my king
-    else if (cell === 3) oppMaterial += 1.0; // opp pawn
-    else if (cell === 4) oppMaterial += 3.0; // opp king
+  // Game ending reward - strongest signal
+  if (gameOver) {
+    return won ? r.rewardWin : r.rewardLose;
   }
-  reward += (myMaterial - oppMaterial) * w.material;
 
-  // Captures
+  // Material BEFORE move
+  let myMatBefore = 0, oppMatBefore = 0;
+  for (const cell of boardBefore) {
+    if (cell === 1) myMatBefore += 1.0;
+    else if (cell === 2) myMatBefore += 3.0;
+    else if (cell === 3) oppMatBefore += 1.0;
+    else if (cell === 4) oppMatBefore += 3.0;
+  }
+
+  // Material AFTER move
+  let myMatAfter = 0, oppMatAfter = 0;
+  for (const cell of boardAfter) {
+    if (cell === 1) myMatAfter += 1.0;
+    else if (cell === 2) myMatAfter += 3.0;
+    else if (cell === 3) oppMatAfter += 1.0;
+    else if (cell === 4) oppMatAfter += 3.0;
+  }
+
+  // CHANGE in material advantage
+  const myDelta = myMatAfter - myMatBefore;
+  const oppDelta = oppMatAfter - oppMatBefore;
+  let reward = (myDelta - oppDelta) * w.material * 10; // scale up
+
+  // Capture bonus
   if (move.captures && move.captures.length > 0) {
     reward += r.rewardCapture * move.captures.length;
   }
 
-  // Advance bonus
+  // Promotion bonus
   const toRow = move.to ? (move.to[1] || move.to.row || 0) : 0;
-  reward += Math.abs(toRow) * 0.01 * w.position;
+  const fromRow = move.from ? (move.from[1] || move.from.row || 0) : 0;
+  // White promotes when reaching row 0, black promotes when reaching row 7
+  if (fromRow === 1 && toRow === 0) reward += r.rewardPromotion; // white promotion
+  if (fromRow === 6 && toRow === 7) reward += r.rewardPromotion; // black promotion
 
-  // Tempo
-  reward += 0.01 * w.tempo;
+  // Advance bonus (small)
+  reward += 0.01 * w.position;
 
   return reward;
 }

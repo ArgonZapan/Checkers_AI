@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 
 function LossChart({ data, title }) {
   const canvasRef = useRef(null);
@@ -40,8 +40,23 @@ function LossChart({ data, title }) {
   return <canvas ref={canvasRef} width={300} height={80} className="loss-chart" />;
 }
 
-function StatsPanel({ elo = {}, stats = {}, lossHistory = {}, round = 0, trainingActive = false, trainingTimeLeft = 0, bufferSize = {} }) {
+function StatsPanel({ elo = {}, stats = {}, lossHistory = {}, round = 0, trainingActive = false, trainingTimeLeft = 0, bufferSize = {}, statsSinceLastTrain = {}, epsilon = {} }) {
   const strategies = ['agresor', 'forteca', 'minimax'];
+
+  // Debug: log stats when they change
+  useEffect(() => {
+    console.log('StatsPanel stats prop:', JSON.stringify(stats));
+    console.log('StatsPanel elo prop:', JSON.stringify(elo));
+  }, [stats, elo]);
+
+  // Create a stable key for each strategy to force re-render
+  const statsWithDefaults = useMemo(() => ({
+    agresor: { wins: 0, losses: 0, draws: 0, ...(stats.agresor || {}) },
+    forteca: { wins: 0, losses: 0, draws: 0, ...(stats.forteca || {}) },
+    minimax: { wins: 0, losses: 0, draws: 0, ...(stats.minimax || {}) }
+  }), [stats.agresor?.wins, stats.agresor?.losses, stats.agresor?.draws,
+      stats.forteca?.wins, stats.forteca?.losses, stats.forteca?.draws,
+      stats.minimax?.wins, stats.minimax?.losses, stats.minimax?.draws]);
 
   // Statystyki są teraz per-strategy: { agresor: { wins, losses, draws }, ... }
   return (
@@ -56,6 +71,7 @@ function StatsPanel({ elo = {}, stats = {}, lossHistory = {}, round = 0, trainin
               <th>W</th>
               <th>L</th>
               <th>D</th>
+              <th>Epsilon</th>
             </tr>
           </thead>
           <tbody>
@@ -63,9 +79,10 @@ function StatsPanel({ elo = {}, stats = {}, lossHistory = {}, round = 0, trainin
               <tr key={s}>
                  <td>{s.charAt(0).toUpperCase() + s.slice(1)}</td>
                  <td>{Math.round(elo[s] ?? 1500)}</td>
-                 <td>{Number(stats[s]?.wins ?? 0)}</td>
-                 <td>{Number(stats[s]?.losses ?? 0)}</td>
-                 <td>{Number(stats[s]?.draws ?? 0)}</td>
+                 <td>{Number(statsWithDefaults[s].wins)}</td>
+                 <td>{Number(statsWithDefaults[s].losses)}</td>
+                 <td>{Number(statsWithDefaults[s].draws)}</td>
+                 <td>{(epsilon[s] ?? 0).toFixed(3)}</td>
               </tr>
             ))}
           </tbody>
@@ -76,6 +93,25 @@ function StatsPanel({ elo = {}, stats = {}, lossHistory = {}, round = 0, trainin
         <h3>Loss Charts</h3>
         <LossChart data={lossHistory.agresor || []} title="Agresor" />
         <LossChart data={lossHistory.forteca || []} title="Forteca" />
+      </div>
+
+      <div className="stats-section">
+        <h3>Since Last Training</h3>
+        <table className="elo-table">
+          <thead>
+            <tr><th>Strategia</th><th>W</th><th>L</th><th>D</th></tr>
+          </thead>
+          <tbody>
+            {strategies.map(s => (
+              <tr key={s}>
+                <td>{s.charAt(0).toUpperCase() + s.slice(1)}</td>
+                <td>{Number(statsSinceLastTrain[s]?.wins ?? 0)}</td>
+                <td>{Number(statsSinceLastTrain[s]?.losses ?? 0)}</td>
+                <td>{Number(statsSinceLastTrain[s]?.draws ?? 0)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       <div className="stats-section">

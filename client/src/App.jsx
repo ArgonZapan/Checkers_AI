@@ -27,12 +27,12 @@ function App() {
   const socketRef = useRef(null);
   const [connected, setConnected] = useState(false);
   const [games, setGames] = useState(() => Array(6).fill(null).map(EMPTY_BOARD));
-  const [selfPlayStatus, setSelfPlayStatus] = useState({ active: false, round: 0, elo: {}, stats: {} });
+  const [selfPlayStatus, setSelfPlayStatus] = useState({ active: false, round: 0, elo: {}, stats: {}, epsilon: { agresor: 1.0, forteca: 1.0 } });
   const [lossHistory, setLossHistory] = useState({ agresor: [], forteca: [] });
   const [params, setParams] = useState({
     agresor: { epsilon: 0.5 },
     forteca: { epsilon: 0.2 },
-    minimax: { depth: 7 }
+    minimax: { depth: 3 }
   });
   const [speed, setSpeed] = useState(500);
   const [speedMode, setSpeedMode] = useState('normal');
@@ -82,8 +82,54 @@ function App() {
 
     socket.on('selfPlayStatus', (data) => {
       console.log('selfPlayStatus received:', JSON.stringify(data));
-      setSelfPlayStatus(data);
-      if (data.elo) setParams(prev => ({
+      console.log('selfPlayStatus epsilon:', JSON.stringify(data.epsilon));
+      console.log('selfPlayStatus stats.agresor:', data.stats?.agresor);
+      console.log('selfPlayStatus stats.forteca:', data.stats?.forteca);
+      console.log('selfPlayStatus stats.minimax:', data.stats?.minimax);
+      
+      setSelfPlayStatus(prev => {
+        // Create completely new state object with fresh references
+        const newStats = data.stats ? {
+          agresor: { 
+            wins: Number(data.stats.agresor?.wins ?? 0), 
+            losses: Number(data.stats.agresor?.losses ?? 0), 
+            draws: Number(data.stats.agresor?.draws ?? 0) 
+          },
+          forteca: { 
+            wins: Number(data.stats.forteca?.wins ?? 0), 
+            losses: Number(data.stats.forteca?.losses ?? 0), 
+            draws: Number(data.stats.forteca?.draws ?? 0) 
+          },
+          minimax: { 
+            wins: Number(data.stats.minimax?.wins ?? 0), 
+            losses: Number(data.stats.minimax?.losses ?? 0), 
+            draws: Number(data.stats.minimax?.draws ?? 0) 
+          }
+        } : prev.stats;
+        
+        const newElo = data.elo ? {
+          agresor: Number(data.elo.agresor ?? 0),
+          forteca: Number(data.elo.forteca ?? 0),
+          minimax: Number(data.elo.minimax ?? 0)
+        } : prev.elo;
+        
+        return {
+          active: data.active ?? prev.active,
+          round: data.round ?? prev.round,
+          elo: newElo,
+          stats: newStats,
+          statsSinceLastTrain: data.statsSinceLastTrain ? {
+            agresor: data.statsSinceLastTrain.agresor ?? prev.statsSinceLastTrain?.agresor ?? { wins: 0, losses: 0, draws: 0 },
+            forteca: data.statsSinceLastTrain.forteca ?? prev.statsSinceLastTrain?.forteca ?? { wins: 0, losses: 0, draws: 0 },
+            minimax: data.statsSinceLastTrain.minimax ?? prev.statsSinceLastTrain?.minimax ?? { wins: 0, losses: 0, draws: 0 }
+          } : prev.statsSinceLastTrain,
+          epsilon: data.epsilon ?? prev.epsilon,
+          trainingActive: data.trainingActive ?? prev.trainingActive,
+          trainingTimeLeft: data.trainingTimeLeft ?? prev.trainingTimeLeft,
+          bufferSize: data.bufferSize ?? prev.bufferSize
+        };
+      });
+      if (data.elo || data.epsilon) setParams(prev => ({
         ...prev,
         agresor: { ...prev.agresor, epsilon: data.epsilon?.agresor ?? prev.agresor.epsilon },
         forteca: { ...prev.forteca, epsilon: data.epsilon?.forteca ?? prev.forteca.epsilon }
@@ -92,8 +138,38 @@ function App() {
 
     socket.on('roundComplete', (data) => {
       console.log('roundComplete received:', JSON.stringify(data));
+      console.log('roundComplete stats:', JSON.stringify(data.stats));
       if (data.elo) {
-        setSelfPlayStatus(prev => ({ ...prev, round: data.round, elo: data.elo, stats: data.stats }));
+        setSelfPlayStatus(prev => {
+          const newStats = data.stats ? {
+            agresor: { 
+              wins: Number(data.stats.agresor?.wins ?? 0), 
+              losses: Number(data.stats.agresor?.losses ?? 0), 
+              draws: Number(data.stats.agresor?.draws ?? 0) 
+            },
+            forteca: { 
+              wins: Number(data.stats.forteca?.wins ?? 0), 
+              losses: Number(data.stats.forteca?.losses ?? 0), 
+              draws: Number(data.stats.forteca?.draws ?? 0) 
+            },
+            minimax: { 
+              wins: Number(data.stats.minimax?.wins ?? 0), 
+              losses: Number(data.stats.minimax?.losses ?? 0), 
+              draws: Number(data.stats.minimax?.draws ?? 0) 
+            }
+          } : prev.stats;
+          
+          return {
+            ...prev,
+            round: data.round,
+            elo: { 
+              agresor: Number(data.elo.agresor ?? 0),
+              forteca: Number(data.elo.forteca ?? 0),
+              minimax: Number(data.elo.minimax ?? 0)
+            },
+            stats: newStats
+          };
+        });
       }
     });
 
@@ -106,6 +182,7 @@ function App() {
     });
 
     socket.on('train', (data) => {
+      console.log('train event received:', data);
       setLossHistory(prev => {
         const next = { ...prev };
         next[data.model] = [...(next[data.model] || []), data.loss];
@@ -120,7 +197,20 @@ function App() {
     });
 
     socket.on('paramsUpdate', (data) => {
-      if (data.minEpsilon !== undefined) setParams(prev => ({ ...prev, agresor: { ...prev.agresor, epsilon: data.epsilon ?? prev.agresor.epsilon } }));
+      setParams(prev => {
+        const next = { ...prev };
+        // Handle both flat params and per-model params
+        if (data.agresor) {
+          next.agresor = { ...next.agresor, ...data.agresor };
+        }
+        if (data.forteca) {
+          next.forteca = { ...next.forteca, ...data.forteca };
+        }
+        if (data.minimaxDepth !== undefined) {
+          next.minimax = { ...next.minimax, depth: data.minimaxDepth };
+        }
+        return next;
+      });
     });
 
     socket.on('modelRestart', (data) => {
@@ -160,14 +250,18 @@ function App() {
             speed={speed}
             onSpeedChange={(v) => { setSpeed(v); sendWs('setSpeed', v); }}
             speedMode={speedMode}
-            onSpeedModeChange={(m) => { setSpeedMode(m); sendWs('setSpeedMode', m); }}
-            minimaxDepth={params.minimax?.depth ?? 7}
-            onMinimaxDepthChange={(d) => setParams(p => ({ ...p, minimax: { ...p.minimax, depth: d } }))}
-          />
+             onSpeedModeChange={(m) => { setSpeedMode(m); sendWs('setSpeedMode', m); }}
+             minimaxDepth={params.minimax?.depth ?? 3}
+             onMinimaxDepthChange={(d) => {
+               setParams(p => ({ ...p, minimax: { ...p.minimax, depth: d } }));
+               sendWs('setMinimaxDepth', d);
+             }}
+           />
         </div>
 
         <div className="dashboard-right">
           <StatsPanel
+            key={`${selfPlayStatus.stats.agresor?.wins}-${selfPlayStatus.stats.forteca?.wins}-${selfPlayStatus.stats.minimax?.wins}`}
             elo={selfPlayStatus.elo || {}}
             stats={selfPlayStatus.stats || {}}
             lossHistory={lossHistory}
@@ -175,6 +269,8 @@ function App() {
             trainingActive={selfPlayStatus.trainingActive}
             trainingTimeLeft={selfPlayStatus.trainingTimeLeft}
             bufferSize={selfPlayStatus.bufferSize || {}}
+            statsSinceLastTrain={selfPlayStatus.statsSinceLastTrain || {}}
+            epsilon={selfPlayStatus.epsilon || { agresor: 1.0, forteca: 1.0 }}
           />
           <ParamsPanel
             params={params}
