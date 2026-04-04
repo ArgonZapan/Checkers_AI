@@ -63,9 +63,9 @@ function StatsPanel({ elo = {}, stats = {}, lossHistory = {}, round = 0, trainin
               <tr key={s}>
                  <td>{s.charAt(0).toUpperCase() + s.slice(1)}</td>
                  <td>{Math.round(elo[s] ?? 1500)}</td>
-                 <td>{stats[s]?.wins ?? 0}</td>
-                 <td>{stats[s]?.losses ?? 0}</td>
-                 <td>{stats[s]?.draws ?? 0}</td>
+                 <td>{Number(stats[s]?.wins ?? 0)}</td>
+                 <td>{Number(stats[s]?.losses ?? 0)}</td>
+                 <td>{Number(stats[s]?.draws ?? 0)}</td>
               </tr>
             ))}
           </tbody>

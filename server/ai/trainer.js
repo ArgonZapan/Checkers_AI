@@ -32,7 +32,7 @@ class SelfPlay {
   async start() {
     if (this.active) return;
     this.active = true;
-    this.io.emit('selfPlayStatus', { active: true, round: this.round, elo: { ...this.elo } });
+    this.io.emit('selfPlayStatus', { active: true, round: this.round, elo: { ...this.elo }, stats: { ...this.stats } });
     this._startParallelTraining();
     await this._startGameLoop();
   }
@@ -43,7 +43,7 @@ class SelfPlay {
       clearInterval(this._trainingInterval);
       this._trainingInterval = null;
     }
-    this.io.emit('selfPlayStatus', { active: false, round: this.round, elo: { ...this.elo } });
+    this.io.emit('selfPlayStatus', { active: false, round: this.round, elo: { ...this.elo }, stats: { ...this.stats } });
   }
 
   _startParallelTraining() {
@@ -99,7 +99,7 @@ class SelfPlay {
 
     while (this.active) {
       this.round++;
-      this.io.emit('selfPlayStatus', { active: true, round: this.round, elo: { ...this.elo } });
+      this.io.emit('selfPlayStatus', { active: true, round: this.round, elo: { ...this.elo }, stats: { ...this.stats } });
 
       for (const matchup of matchups) {
         if (!this.active) return;

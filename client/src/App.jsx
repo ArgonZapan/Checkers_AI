@@ -81,6 +81,7 @@ function App() {
     });
 
     socket.on('selfPlayStatus', (data) => {
+      console.log('selfPlayStatus received:', JSON.stringify(data));
       setSelfPlayStatus(data);
       if (data.elo) setParams(prev => ({
         ...prev,
@@ -90,6 +91,7 @@ function App() {
     });
 
     socket.on('roundComplete', (data) => {
+      console.log('roundComplete received:', JSON.stringify(data));
       if (data.elo) {
         setSelfPlayStatus(prev => ({ ...prev, round: data.round, elo: data.elo, stats: data.stats }));
       }

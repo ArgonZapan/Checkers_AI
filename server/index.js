@@ -274,9 +274,6 @@ io.on('connection', (socket) => {
   console.log(`Client connected: ${socket.id}`);
 
   // Send initial status
-  console.log(`Client connected: ${socket.id}`);
-  
-  // Send initial status
   socket.emit('selfPlayStatus', selfPlay.getStatus());
   console.log('Sent initial selfPlayStatus');
   
