@@ -13,6 +13,70 @@ const { cppFetch, delay, SimpleRateLimiter, WsRateLimiter, sanitizeStatePayload 
 // C++ Engine runs on port 8080 (checkers-server-new.exe)
 // Node.js proxies /api/move and /api/engine/best-move to it
 
+// =================== C++ Engine Process ===================
+let cppEngineProcess = null;
+
+function startCppEngine() {
+  const enginePath = path.join(__dirname, '..', 'engine', 'build', 'checkers-server-new.exe');
+  const { spawn } = require('child_process');
+  
+  // Check if engine is already running by testing the port
+  const net = require('net');
+  const checkPort = () => {
+    return new Promise((resolve) => {
+      const socket = net.createConnection({ 
+        host: CONFIG.server.host, 
+        port: CONFIG.server.enginePort 
+      }, () => {
+        socket.end();
+        resolve(true); // Port is in use - engine is running
+      });
+      socket.on('error', () => resolve(false));
+      socket.setTimeout(1000);
+      socket.on('timeout', () => {
+        socket.destroy();
+        resolve(false);
+      });
+    });
+  };
+
+  checkPort().then(isRunning => {
+    if (isRunning) {
+      console.log(`C++ Engine already running on port ${CONFIG.server.enginePort}`);
+      return;
+    }
+
+    console.log(`Starting C++ Engine on port ${CONFIG.server.enginePort}...`);
+    cppEngineProcess = spawn(enginePath, [], {
+      cwd: path.dirname(enginePath),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: false
+    });
+
+    cppEngineProcess.stdout.on('data', (data) => {
+      console.log(`[Engine] ${data.toString().trim()}`);
+    });
+
+    cppEngineProcess.stderr.on('data', (data) => {
+      console.error(`[Engine Error] ${data.toString().trim()}`);
+    });
+
+    cppEngineProcess.on('error', (err) => {
+      console.error(`Failed to start C++ Engine: ${err.message}`);
+    });
+
+    cppEngineProcess.on('exit', (code) => {
+      console.log(`C++ Engine exited with code: ${code}`);
+      cppEngineProcess = null;
+    });
+
+    console.log(`C++ Engine started (PID: ${cppEngineProcess.pid})`);
+  });
+}
+
+// Start C++ engine on module load
+startCppEngine();
+
 // =================== Main App (port 3000) ===================
 const app = express();
 const server = http.createServer(app);
@@ -34,11 +98,11 @@ app.use(express.json({ limit: '1mb' }));
 app.disable('X-Powered-By');
 app.set('trust proxy', false);
 
-// Serve static frontend
-const distPath = path.join(__dirname, '..', 'client', 'dist');
-if (fs.existsSync(distPath)) {
-  app.use(express.static(distPath));
-}
+// Serve static frontend - disabled, use Vite dev server (port 5173) instead
+// const distPath = path.join(__dirname, '..', 'client', 'dist');
+// if (fs.existsSync(distPath)) {
+//   app.use(express.static(distPath));
+// }
 
 // Socket.IO
 const io = new Server(server, {
@@ -180,95 +244,57 @@ app.get('/api/selfplay/status', (req, res) => {
   res.json(selfPlay.getStatus());
 });
 
+// Helper: proxy request to C++ engine with retry
+function proxyToEngine(req, res, path, maxRetries = 3) {
+  const http = require('http');
+  const postData = JSON.stringify(req.body || {});
+  
+  const tryProxy = (attempt) => {
+    const options = {
+      hostname: CONFIG.server.host,
+      port: CONFIG.server.enginePort,
+      path: path,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData)
+      }
+    };
+    
+    const proxyReq = http.request(options, (proxyRes) => {
+      let data = '';
+      proxyRes.on('data', chunk => data += chunk);
+      proxyRes.on('end', () => {
+        try {
+          res.json(JSON.parse(data));
+        } catch (e) {
+          res.status(500).json({ error: 'Engine response parse error' });
+        }
+      });
+    });
+    
+    proxyReq.on('error', (e) => {
+      if (attempt < maxRetries) {
+        setTimeout(() => tryProxy(attempt + 1), 500 * attempt);
+      } else {
+        res.status(502).json({ error: 'Engine unavailable after retries' });
+      }
+    });
+    
+    proxyReq.write(postData);
+    proxyReq.end();
+  };
+  
+  tryProxy(0);
+}
+
 // Proxy to local engine (port 8080)
-app.post('/api/move', async (req, res) => {
-  try {
-    // Forward request to engine app running on same process
-    const http = require('http');
-    const postData = JSON.stringify(req.body);
-    
-    const options = {
-      hostname: CONFIG.server.host,
-      port: CONFIG.server.enginePort,
-      path: '/api/move',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(postData)
-      }
-    };
-    
-    const proxyReq = http.request(options, (proxyRes) => {
-      let data = '';
-      proxyRes.on('data', chunk => data += chunk);
-      proxyRes.on('end', () => {
-        try {
-          res.json(JSON.parse(data));
-        } catch (e) {
-          res.status(500).json({ error: 'Engine response parse error' });
-        }
-      });
-    });
-    
-    proxyReq.on('error', (e) => {
-      res.status(502).json({ error: 'Engine unavailable' });
-    });
-    
-    proxyReq.write(postData);
-    proxyReq.end();
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+app.post('/api/game/reset', (req, res) => proxyToEngine(req, res, '/api/game/reset'));
+app.post('/api/game/full-state', (req, res) => proxyToEngine(req, res, '/api/game/full-state'));
+app.post('/api/move', (req, res) => proxyToEngine(req, res, '/api/move'));
+app.post('/api/engine/best-move', (req, res) => proxyToEngine(req, res, '/api/engine/best-move'));
 
-app.post('/api/engine/best-move', async (req, res) => {
-  try {
-    const http = require('http');
-    const postData = JSON.stringify(req.body);
-    
-    const options = {
-      hostname: CONFIG.server.host,
-      port: CONFIG.server.enginePort,
-      path: '/api/engine/best-move',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(postData)
-      }
-    };
-    
-    const proxyReq = http.request(options, (proxyRes) => {
-      let data = '';
-      proxyRes.on('data', chunk => data += chunk);
-      proxyRes.on('end', () => {
-        try {
-          res.json(JSON.parse(data));
-        } catch (e) {
-          res.status(500).json({ error: 'Engine response parse error' });
-        }
-      });
-    });
-    
-    proxyReq.on('error', (e) => {
-      res.status(502).json({ error: 'Engine unavailable' });
-    });
-    
-    proxyReq.write(postData);
-    proxyReq.end();
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Fallback routes to frontend
-app.get('*', (req, res) => {
-  const indexPath = path.join(distPath, 'index.html');
-  if (fs.existsSync(indexPath)) {
-    res.sendFile(indexPath);
-  } else {
-    res.json({ message: 'Frontend not built. Run: cd client && npm run build' });
-  }
-});
+// API-only mode - no frontend serving (use Vite dev server on port 5173)
 
 // =================== WebSocket Events ===================
 
@@ -313,17 +339,39 @@ io.on('connection', (socket) => {
     socket.emit('speedUpdate', { speedMode: mode });
   });
 
-  socket.on('setParams', (params) => {
+  socket.on('setParams', (data) => {
     if (!wsLimiter.canEmit(socket, 'setParams', 1000)) return;
     const ALLOWED = new Set(['epsilon', 'minEpsilon', 'epsilonDecay', 'lr', 'batchSize', 'gamma']);
-    for (const key of Object.keys(params || {})) {
-      if (!ALLOWED.has(key)) {
-        socket.emit('error', { message: `Unknown param: ${key}` });
-        return;
+    // Handle both flat params and per-model params
+    let params = data;
+    if (data.agresor || data.forteca) {
+      // Per-model params format
+      if (data.agresor) {
+        for (const key of Object.keys(data.agresor)) {
+          if (!ALLOWED.has(key)) {
+            socket.emit('error', { message: `Unknown param: ${key}` });
+            return;
+          }
+        }
+      }
+      if (data.forteca) {
+        for (const key of Object.keys(data.forteca)) {
+          if (!ALLOWED.has(key)) {
+            socket.emit('error', { message: `Unknown param: ${key}` });
+            return;
+          }
+        }
+      }
+    } else {
+      for (const key of Object.keys(params || {})) {
+        if (!ALLOWED.has(key)) {
+          socket.emit('error', { message: `Unknown param: ${key}` });
+          return;
+        }
       }
     }
     selfPlay.paramsVersion++;
-    socket.emit('paramsUpdate', { ...params, paramsVersion: selfPlay.paramsVersion });
+    socket.emit('paramsUpdate', { agresor: data.agresor, forteca: data.forteca, paramsVersion: selfPlay.paramsVersion });
   });
 
   socket.on('setMinimaxDepth', (depth) => {
@@ -364,16 +412,20 @@ server.listen(API_PORT, HOST, () => {
 });
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, saving checkpoint...');
+function gracefulShutdown() {
+  console.log('Shutting down, saving checkpoint...');
   selfPlay.saveCheckpoint();
+  
+  if (cppEngineProcess) {
+    console.log('Stopping C++ Engine...');
+    cppEngineProcess.kill('SIGTERM');
+    cppEngineProcess = null;
+  }
+  
   server.close(() => process.exit(0));
-});
+}
 
-process.on('SIGINT', () => {
-  console.log('SIGINT received, saving checkpoint...');
-  selfPlay.saveCheckpoint();
-  server.close(() => process.exit(0));
-});
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
 
 module.exports = { app, server, io };

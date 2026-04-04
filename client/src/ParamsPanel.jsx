@@ -4,42 +4,33 @@ const PARAMS_CONFIG = {
   agresor: {
     title: 'Agresor',
     params: [
-      { key: 'epsilon', label: 'Epsilon', default: 0.5 },
-      { key: 'minEpsilon', label: 'Min Epsilon', default: 0.02 },
-      { key: 'epsilonDecay', label: 'Decay/rundę', default: 0.015 }
+      { key: 'epsilon', label: 'Epsilon', default: 0.3, step: 0.01, readOnly: true },
+      { key: 'minEpsilon', label: 'Min Epsilon', default: 0.01, step: 0.01, readOnly: true },
+      { key: 'epsilonDecay', label: 'Decay/rundę', default: 0.005, step: 0.001, readOnly: true }
     ]
   },
   forteca: {
     title: 'Forteca',
     params: [
-      { key: 'epsilon', label: 'Epsilon', default: 0.2 },
-      { key: 'minEpsilon', label: 'Min Epsilon', default: 0.03 },
-      { key: 'epsilonDecay', label: 'Decay/rundę', default: 0.008 }
+      { key: 'epsilon', label: 'Epsilon', default: 0.3, step: 0.01, readOnly: true },
+      { key: 'minEpsilon', label: 'Min Epsilon', default: 0.01, step: 0.01, readOnly: true },
+      { key: 'epsilonDecay', label: 'Decay/rundę', default: 0.005, step: 0.001, readOnly: true }
     ]
   },
   minimax: {
     title: 'Minimax',
     params: [
-      { key: 'depth', label: 'Depth', default: 7 }
+      { key: 'depth', label: 'Depth', default: 3, step: 1 }
     ],
     readOnly: true
   },
-  architecture: {
-    title: 'Architektura',
-    params: [
-      { key: 'layers', label: 'Warstwy', default: 3 },
-      { key: 'neurons', label: 'Neurony', default: 128 },
-      { key: 'activation', label: 'Aktywacja', default: 'relu' }
-    ]
-  }
 };
 
 function ParamsPanel({ params = {}, activeTab = 'agresor', onTabChange, onParamChange }) {
   const tabs = [
     { key: 'agresor', label: 'Agresor' },
     { key: 'forteca', label: 'Forteca' },
-    { key: 'minimax', label: 'Minimax' },
-    { key: 'architecture', label: 'Architektura' }
+    { key: 'minimax', label: 'Minimax' }
   ];
 
   const tab = PARAMS_CONFIG[activeTab];
@@ -64,36 +55,15 @@ function ParamsPanel({ params = {}, activeTab = 'agresor', onTabChange, onParamC
         {tab.params.map(p => (
           <div className="param-row" key={p.key}>
             <span className="param-label">{p.label}</span>
-            {tab.readOnly ? (
+            {tab.readOnly || p.readOnly ? (
               <span className="param-value">{tabParams[p.key] ?? p.default}</span>
-            ) : typeof p.default === 'string' ? (
-              <select
-                className="param-value"
-                style={{ background: '#222', color: '#ccc', border: '1px solid #444' }}
-                value={tabParams[p.key] ?? p.default}
-                onChange={(e) => onParamChange(activeTab, p.key, e.target.value)}
-              >
-                <option value="relu">ReLU</option>
-                <option value="tanh">Tanh</option>
-                <option value="sigmoid">Sigmoid</option>
-                <option value="leaky">Leaky ReLU</option>
-              </select>
-            ) : typeof p.default === 'number' && p.default < 1 ? (
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={tabParams[p.key] ?? p.default}
-                onChange={(e) => onParamChange(activeTab, p.key, parseFloat(e.target.value))}
-                style={{ width: 100 }}
-              />
             ) : (
               <input
                 type="number"
+                step={p.step || 0.01}
                 value={tabParams[p.key] ?? p.default}
-                onChange={(e) => onParamChange(activeTab, p.key, parseInt(e.target.value) || p.default)}
-                style={{ width: 50, background: '#333', color: '#ccc', border: '1px solid #444', padding: '2px 4px', borderRadius: 4 }}
+                onChange={(e) => onParamChange(activeTab, p.key, parseFloat(e.target.value) || p.default)}
+                style={{ width: 80, background: '#333', color: '#ccc', border: '1px solid #444', padding: '2px 4px', borderRadius: 4 }}
               />
             )}
           </div>

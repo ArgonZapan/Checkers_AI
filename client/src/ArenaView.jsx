@@ -23,7 +23,7 @@ function ArenaView({ games, labels }) {
               <div className="player-info">
                 <span style={{ color: '#fff' }}>⚪ {matchup.white}</span>
                 <span style={{ color: '#888' }}>vs</span>
-                <span style={{ color: '#000' }}>⚫ {matchup.black}</span>
+                 <span style={{ color: '#aaa' }}>⚫ {matchup.black}</span>
               </div>
             </div>
             <MiniBoard

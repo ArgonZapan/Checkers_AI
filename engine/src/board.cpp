@@ -67,6 +67,11 @@ void Board::makeMove(const Move& move) {
     // Move piece: remove from source, place on destination
     myPiecesRef = (myPiecesRef & ~fromMask) | toMask;
 
+    // If piece was already a king, move king bit too (preserve king status)
+    if (kings & fromMask) {
+        kings = (kings & ~fromMask) | toMask;
+    }
+
     // Remove captured pieces from opponent and kings
     for (const auto& cap : move.captures) {
         uint64_t capMask = sqMask(cap.row, cap.col);

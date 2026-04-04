@@ -20,9 +20,9 @@ const CONFIG = {
       agresor: Object.freeze({
         type: 'dqn',
         weights: Object.freeze({ material: 0.55, position: 0.15, threat: 0.20, tempo: 0.10 }),
-        epsilon: 0.5,
-        minEpsilon: 0.02,
-        epsilonDecay: 0.015,
+        epsilon: 0.3,
+        minEpsilon: 0.01,
+        epsilonDecay: 0.005,
         rewardCapture: 0.15,
         rewardAdvance: 0.10,
         rewardPromotion: 0.20,
@@ -32,9 +32,9 @@ const CONFIG = {
       forteca: Object.freeze({
         type: 'dqn',
         weights: Object.freeze({ material: 0.25, position: 0.40, threat: 0.10, tempo: 0.25 }),
-        epsilon: 0.2,
-        minEpsilon: 0.03,
-        epsilonDecay: 0.008,
+        epsilon: 0.3,
+        minEpsilon: 0.01,
+        epsilonDecay: 0.005,
         rewardCapture: 0.08,
         rewardAdvance: 0.03,
         rewardPromotion: 0.40,
@@ -43,13 +43,13 @@ const CONFIG = {
       }),
       minimax: Object.freeze({
         type: 'minimax',
-        depth: 7,
+        depth: 3,
         weights: Object.freeze({ material: 1.0, position: 0.3 })
       })
     })
   },
   minimax: {
-    depth: 7
+    depth: 3
   },
   board: {
     cellSize: 60,
@@ -57,10 +57,10 @@ const CONFIG = {
   }
 };
 
-// CONFIG.server musi być modyfikowalny dla dynamicznego ustawiania delayu przez WebSocket
+// CONFIG.server i CONFIG.minimax muszą być modyfikowalne dla dynamicznego ustawiania przez WebSocket
 Object.freeze(CONFIG.board);
 Object.freeze(CONFIG.board.animation);
 Object.freeze(CONFIG.ai);
-Object.freeze(CONFIG.minimax);
+// CONFIG.minimax - NIE zamrażamy, żeby depth mógł być zmieniany dynamicznie
 
 module.exports = CONFIG;
