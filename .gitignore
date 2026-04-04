@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+client/dist/
+engine/build/
+
+# Data files (gitignored - can be large)
+models/
+data/
+
+# External headers
+engine/src/httplib/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

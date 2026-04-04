@@ -1,0 +1,18 @@
+{
+  "name": "checkers-ai-server",
+  "version": "1.0.0",
+  "description": "Checkers AI self-play server with TensorFlow.js",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "@tensorflow/tfjs-node": "^4.15.0",
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "rate-limiter-flexible": "^3.0.0"
+  }
+}
