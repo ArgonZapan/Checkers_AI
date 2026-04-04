@@ -39,7 +39,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('agresor');
 
   useEffect(() => {
-    const socket = io({
+    const socket = io('http://localhost:3000', {
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,

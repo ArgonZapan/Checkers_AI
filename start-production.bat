@@ -14,9 +14,6 @@ echo Starting unified server...
 start "Checkers AI Server" cmd.exe /c "node index.js"
 
 timeout /t 4 /nobreak >nul
-echo Opening dashboard...
-start http://localhost:3000
-
 echo.
 echo ============================================================
 echo Done! Close the server window to stop.

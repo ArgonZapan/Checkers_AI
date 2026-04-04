@@ -24,7 +24,7 @@ app.use(helmet({
 }));
 
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  origin: ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:5173'],
   credentials: true
 }));
 
@@ -41,7 +41,7 @@ if (fs.existsSync(distPath)) {
 // Socket.IO
 const io = new Server(server, {
   cors: {
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    origin: ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:5173'],
     methods: ['GET', 'POST']
   },
   pingTimeout: 60000,
@@ -274,7 +274,17 @@ io.on('connection', (socket) => {
   console.log(`Client connected: ${socket.id}`);
 
   // Send initial status
+  console.log(`Client connected: ${socket.id}`);
+  
+  // Send initial status
   socket.emit('selfPlayStatus', selfPlay.getStatus());
+  console.log('Sent initial selfPlayStatus');
+  
+  // Send current speed settings
+  socket.emit('speedUpdate', {
+    aiMoveDelayMs: CONFIG.server.aiMoveDelayMs,
+    speedMode: CONFIG.server.speedMode 
+  });
 
   socket.on('startSelfPlay', () => {
     if (!wsLimiter.canEmit(socket, 'startSelfPlay', 1000)) return;

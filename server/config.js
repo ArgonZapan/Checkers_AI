@@ -57,7 +57,7 @@ const CONFIG = {
   }
 };
 
-Object.freeze(CONFIG.server);
+// CONFIG.server musi być modyfikowalny dla dynamicznego ustawiania delayu przez WebSocket
 Object.freeze(CONFIG.board);
 Object.freeze(CONFIG.board.animation);
 Object.freeze(CONFIG.ai);
