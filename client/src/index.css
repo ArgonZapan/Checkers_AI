@@ -83,10 +83,25 @@ header .status {
 
 .mini-board-header {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 2px;
   font-size: 0.75rem;
   margin-bottom: 4px;
   color: #aaa;
+}
+
+.player-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  padding: 2px 4px;
+  background: rgba(15, 52, 96, 0.3);
+  border-radius: 4px;
+}
+
+.player-info span {
+  flex-shrink: 0;
 }
 
 .mini-board-svg {

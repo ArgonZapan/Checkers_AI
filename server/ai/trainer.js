@@ -12,9 +12,9 @@ class SelfPlay {
     this.paramsVersion = 0;
     this.elo = { agresor: 1500, forteca: 1500, minimax: 1500 };
     this.stats = {
-      agresor_vs_forteca: { w: 0, l: 0, d: 0 },
-      agresor_vs_minimax: { w: 0, l: 0, d: 0 },
-      forteca_vs_minimax: { w: 0, l: 0, d: 0 }
+      agresor: { wins: 0, losses: 0, draws: 0 },
+      forteca: { wins: 0, losses: 0, draws: 0 },
+      minimax: { wins: 0, losses: 0, draws: 0 }
     };
     this.buffers = {
       agresor: new ReplayBuffer(config.ai.bufferSize),
@@ -32,7 +32,7 @@ class SelfPlay {
   async start() {
     if (this.active) return;
     this.active = true;
-    this.io.emit('selfPlayStatus', { active: true, round: this.round, elo: { ...this.elo } });
+    this.io.emit('selfPlayStatus', { active: true, round: this.round, elo: { ...this.elo }, stats: { ...this.stats } });
     this._startParallelTraining();
     await this._startGameLoop();
   }
@@ -43,7 +43,7 @@ class SelfPlay {
       clearInterval(this._trainingInterval);
       this._trainingInterval = null;
     }
-    this.io.emit('selfPlayStatus', { active: false, round: this.round, elo: { ...this.elo } });
+    this.io.emit('selfPlayStatus', { active: false, round: this.round, elo: { ...this.elo }, stats: { ...this.stats } });
   }
 
   _startParallelTraining() {
@@ -99,7 +99,7 @@ class SelfPlay {
 
     while (this.active) {
       this.round++;
-      this.io.emit('selfPlayStatus', { active: true, round: this.round, elo: { ...this.elo } });
+      this.io.emit('selfPlayStatus', { active: true, round: this.round, elo: { ...this.elo }, stats: { ...this.stats } });
 
       for (const matchup of matchups) {
         if (!this.active) return;
@@ -172,30 +172,37 @@ class SelfPlay {
         lastMove: chosenMove ? { from: chosenMove.from, to: chosenMove.to } : null
       });
 
-const modeDelay = this.config.server.speedMode === 'normal' ? this.config.server.normalModeDelayMs : 0;
-      const sliderDelay = this.config.server.aiMoveDelayMs || 0;
-      const totalDelay = modeDelay + sliderDelay;
+const baseDelay = this.config.server.speedMode === 'normal' ? this.config.server.normalModeDelayMs : 0;
+      // Suwak kontroluje całkowity delay, nie dodaje do baseDelay
+      const totalDelay = this.config.server.aiMoveDelayMs ?? baseDelay;
       if (totalDelay > 0) await delay(totalDelay);
     }
 
-    const winner = state.winner;
-    const key = getMatchupKey(matchup.white, matchup.black);
+    const winner = state.winner; // "white", "black", lub null/draw
 
-    if (winner === matchup.white) {
-      this.stats[key].w++;
+    if (winner === 'white') {
+      // Biały wygrywa - to jest matchup.white
+      this.stats[matchup.white].wins++;
+      this.stats[matchup.black].losses++;
       this.elo[matchup.white] = updateElo(this.elo[matchup.white], this.elo[matchup.black], 1);
       this.elo[matchup.black] = updateElo(this.elo[matchup.black], this.elo[matchup.white], 0);
-    } else if (winner === matchup.black) {
-      this.stats[key].l++;
+    } else if (winner === 'black') {
+      // Czarny wygrywa - to jest matchup.black
+      this.stats[matchup.black].wins++;
+      this.stats[matchup.white].losses++;
       this.elo[matchup.black] = updateElo(this.elo[matchup.black], this.elo[matchup.white], 1);
       this.elo[matchup.white] = updateElo(this.elo[matchup.white], this.elo[matchup.black], 0);
     } else {
-      this.stats[key].d++;
+      // Remis lub brak zwycięzcy
+      this.stats[matchup.white].draws++;
+      this.stats[matchup.black].draws++;
       this.elo[matchup.white] = updateElo(this.elo[matchup.white], this.elo[matchup.black], 0.5);
       this.elo[matchup.black] = updateElo(this.elo[matchup.black], this.elo[matchup.white], 0.5);
     }
 
-    this.io.emit('gameOver', { game: matchup.idx + 1, winner, moves: moves.length });
+    const winnerName = winner === 'white' ? matchup.white.charAt(0).toUpperCase() + matchup.white.slice(1) : 
+                       winner === 'black' ? matchup.black.charAt(0).toUpperCase() + matchup.black.slice(1) : null;
+    this.io.emit('gameOver', { game: matchup.idx + 1, winner: winnerName || 'draw', moves: moves.length });
   }
 
   saveCheckpoint() {
@@ -229,7 +236,7 @@ const modeDelay = this.config.server.speedMode === 'normal' ? this.config.server
   reset() {
     this.round = 0;
     this.elo = { agresor: 1500, forteca: 1500, minimax: 1500 };
-    this.stats = { agresor_vs_forteca: { w: 0, l: 0, d: 0 }, agresor_vs_minimax: { w: 0, l: 0, d: 0 }, forteca_vs_minimax: { w: 0, l: 0, d: 0 } };
+    this.stats = { agresor: { wins: 0, losses: 0, draws: 0 }, forteca: { wins: 0, losses: 0, draws: 0 }, minimax: { wins: 0, losses: 0, draws: 0 } };
     this.lossHistory = { agresor: [], forteca: [] };
     this.buffers.agresor.clear();
     this.buffers.forteca.clear();
@@ -268,14 +275,6 @@ const modeDelay = this.config.server.speedMode === 'normal' ? this.config.server
 function updateElo(ratingMe, ratingOpponent, actualScore, k = 32) {
   const expected = 1 / (1 + Math.pow(10, (ratingOpponent - ratingMe) / 400));
   return ratingMe + k * (actualScore - expected);
-}
-
-function getMatchupKey(white, black) {
-  const names = [white, black].sort();
-  if (names[0] === 'agresor' && names[1] === 'forteca') return 'agresor_vs_forteca';
-  if (names[0] === 'agresor' && names[1] === 'minimax') return 'agresor_vs_minimax';
-  if (names[0] === 'forteca' && names[1] === 'minimax') return 'forteca_vs_minimax';
-  return 'unknown';
 }
 
 module.exports = { SelfPlay, updateElo };

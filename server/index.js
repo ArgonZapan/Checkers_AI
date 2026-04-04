@@ -277,6 +277,13 @@ io.on('connection', (socket) => {
 
   // Send initial status
   socket.emit('selfPlayStatus', selfPlay.getStatus());
+  console.log('Sent initial selfPlayStatus');
+  
+  // Send current speed settings
+  socket.emit('speedUpdate', {
+    aiMoveDelayMs: CONFIG.server.aiMoveDelayMs,
+    speedMode: CONFIG.server.speedMode 
+  });
 
   socket.on('startSelfPlay', () => {
     if (!wsLimiter.canEmit(socket, 'startSelfPlay', 1000)) return;

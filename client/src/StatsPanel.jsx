@@ -43,19 +43,7 @@ function LossChart({ data, title }) {
 function StatsPanel({ elo = {}, stats = {}, lossHistory = {}, round = 0, trainingActive = false, trainingTimeLeft = 0, bufferSize = {} }) {
   const strategies = ['agresor', 'forteca', 'minimax'];
 
-  const totalWL = {};
-  for (const s of strategies) {
-    let w = 0, l = 0, d = 0;
-    for (const key of Object.keys(stats)) {
-      if (key.includes(s)) {
-        w += stats[key]?.w || 0;
-        l += stats[key]?.l || 0;
-        d += stats[key]?.d || 0;
-      }
-    }
-    totalWL[s] = { w, l, d };
-  }
-
+  // Statystyki są teraz per-strategy: { agresor: { wins, losses, draws }, ... }
   return (
     <div className="stats-panel">
       <div className="stats-section">
@@ -73,25 +61,15 @@ function StatsPanel({ elo = {}, stats = {}, lossHistory = {}, round = 0, trainin
           <tbody>
             {strategies.map(s => (
               <tr key={s}>
-                <td>{s.charAt(0).toUpperCase() + s.slice(1)}</td>
-                <td>{elo[s] ?? 1500}</td>
-                <td>{totalWL[s]?.w ?? 0}</td>
-                <td>{totalWL[s]?.l ?? 0}</td>
-                <td>{totalWL[s]?.d ?? 0}</td>
+                 <td>{s.charAt(0).toUpperCase() + s.slice(1)}</td>
+                 <td>{Math.round(elo[s] ?? 1500)}</td>
+                 <td>{Number(stats[s]?.wins ?? 0)}</td>
+                 <td>{Number(stats[s]?.losses ?? 0)}</td>
+                 <td>{Number(stats[s]?.draws ?? 0)}</td>
               </tr>
             ))}
           </tbody>
         </table>
-      </div>
-
-      <div className="stats-section">
-        <h3>Head-to-Head</h3>
-        {Object.keys(stats).map((key) => (
-          <div className="h2h-row" key={key}>
-            <span>{key.replace(/_/g, ' ')}</span>
-            <span>{stats[key]?.w}W / {stats[key]?.l}L / {stats[key]?.d}D</span>
-          </div>
-        ))}
       </div>
 
       <div className="stats-section">
