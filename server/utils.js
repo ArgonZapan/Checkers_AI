@@ -71,6 +71,9 @@ class SimpleRateLimiter {
     this.maxRequests = maxRequests;
     this.windowMs = windowMs;
     this.entries = new Map();
+    // Auto-cleanup every 5 minutes to prevent memory growth
+    this._cleanupInterval = setInterval(() => this.cleanup(), 300000);
+    this._cleanupInterval.unref(); // Don't prevent process exit
   }
 
   isAllowed(key) {
@@ -111,6 +114,9 @@ class SimpleRateLimiter {
 class WsRateLimiter {
   constructor() {
     this.throttleMap = new Map();
+    // Auto-cleanup stale entries every minute
+    this._cleanupInterval = setInterval(() => this.cleanup(), 60000);
+    this._cleanupInterval.unref(); // Don't prevent process exit
   }
 
   canEmit(socket, event, minIntervalMs) {
@@ -122,6 +128,26 @@ class WsRateLimiter {
       return true;
     }
     return false;
+  }
+
+  // Remove all entries for a disconnected socket
+  cleanupSocket(socketId) {
+    for (const key of this.throttleMap.keys()) {
+      if (key.startsWith(`${socketId}:`)) {
+        this.throttleMap.delete(key);
+      }
+    }
+  }
+
+  // Remove entries older than 10 minutes (stale sockets)
+  cleanup() {
+    const now = Date.now();
+    const maxAge = 600000; // 10 minutes
+    for (const [key, timestamp] of this.throttleMap) {
+      if (now - timestamp > maxAge) {
+        this.throttleMap.delete(key);
+      }
+    }
   }
 }
 

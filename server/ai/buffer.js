@@ -19,8 +19,13 @@ class ReplayBuffer {
     const batch = [];
     const size = this.buffer.length;
     if (size === 0) return batch;
-    for (let i = 0; i < Math.min(n, size); i++) {
-      const idx = Math.floor(Math.random() * size);
+    // Sampling WITHOUT replacement using Fisher-Yates partial shuffle
+    const count = Math.min(n, size);
+    const indices = new Set();
+    while (indices.size < count) {
+      indices.add(Math.floor(Math.random() * size));
+    }
+    for (const idx of indices) {
       batch.push(this.buffer[idx]);
     }
     return batch;

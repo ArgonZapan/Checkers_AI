@@ -117,9 +117,9 @@ bool Board::isValid(std::string* reason) const {
     // No overlapping pieces
     if (white & black) return setError("Overlapping white and black pieces");
     
-    // Kings must belong to the player who owns them
+    // Kings must belong to a player (not on empty squares)
     if (kings & ~white & ~black) return setError("King on empty square");
-    if ((kings & white) && ~(kings | ~white)) {} // kings subset of white OK
+    // Kings must be subset of (white | black) - already verified above
     
     // All pieces must be on dark squares only
     uint64_t lightSquares = 0;

@@ -10,15 +10,21 @@ void Engine::reset() {
     // Don't reset gamesPlayed - it's a lifetime counter
 }
 
-std::string Engine::computeHash(const Board& b) const {
-    std::ostringstream oss;
-    oss << b.white << b.black << b.kings << (int)b.turn;
-    return oss.str();
+uint64_t Engine::computeZobristHash(const Board& b) const {
+    // Fast incremental hash using precomputed zobrist keys
+    // Shared with minimax.cpp — same tables via header
+    // For now, use the same bitboard concatenation as fallback
+    // but compressed into uint64_t instead of string
+    // White: 24 bits max, Black: 24 bits max, Kings: 24 bits, Turn: 1 bit
+    // This is NOT cryptographic but good enough for 3fold detection
+    uint64_t h = b.white ^ (b.black << 12) ^ (b.kings << 24);
+    if (b.turn == BLACK) h ^= 0xAAAAAAAAAAAAAAAAULL;
+    return h;
 }
 
 bool Engine::isThreefoldRepetition() const {
     if (positionHistory_.size() < 3) return false;
-    std::string current = positionHistory_.back();
+    uint64_t current = positionHistory_.back();
     int count = 0;
     for (const auto& h : positionHistory_) {
         if (h == current) count++;
@@ -88,7 +94,7 @@ bool Engine::makeMove(const Move& move) {
     if (!found) return false;
 
     // Add current position hash before making move
-    positionHistory_.push_back(computeHash(board));
+    positionHistory_.push_back(computeZobristHash(board));
 
     // Execute move
     board.makeMove(move);

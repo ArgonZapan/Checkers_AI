@@ -80,9 +80,17 @@ class SelfPlay {
   _startParallelTraining() {
     this._trainingIntervals = [];
     for (const name of ['agresor', 'forteca']) {
+      this['_training_' + name] = false; // running guard
       const interval = setInterval(async () => {
         if (!this.active) return;
-        await this._trainModel(name);
+        // Skip if previous training still running — prevents overlap/race condition on TF.js tensors
+        if (this['_training_' + name]) return;
+        this['_training_' + name] = true;
+        try {
+          await this._trainModel(name);
+        } finally {
+          this['_training_' + name] = false;
+        }
       }, 30000);
       this._trainingIntervals.push(interval);
     }
@@ -173,7 +181,9 @@ class SelfPlay {
         let boardInput = state.board;
         if (!isWhite) boardInput = flipBoardInput(state.board);
         const result = await predict(model, boardInput, state.legalMoves, eps);
-        if (state.legalMoves[result.moveIdx]) {
+        if (typeof result.moveIdx === 'number' && Number.isFinite(result.moveIdx) &&
+            result.moveIdx >= 0 && result.moveIdx < state.legalMoves.length &&
+            state.legalMoves[result.moveIdx]) {
           chosenMove = state.legalMoves[result.moveIdx];
         } else {
           const fallback = await localFetch('/api/engine/best-move', 'POST', { depth: 4 });
@@ -189,7 +199,9 @@ class SelfPlay {
           // Compute reward AFTER move using boardBefore and boardAfter
           if (strategyName !== 'minimax') {
             const reward = computeReward(strategyName, boardBefore, state.board, chosenMove, this.config);
-            this.buffers[strategyName].add({ board: boardBefore, from: chosenMove.from, to: chosenMove.to, turn: isWhite ? 1 : -1, reward });
+            // Model always trains from its own "white" perspective
+            const trainBoard = isWhite ? boardBefore : flipBoardInput(boardBefore);
+            this.buffers[strategyName].add({ board: trainBoard, from: chosenMove.from, to: chosenMove.to, turn: 1, reward });
           }
         } catch (e) { console.error('Move error:', e.message); break; }
       }
@@ -203,41 +215,52 @@ class SelfPlay {
       if (totalDelay > 0) await delay(totalDelay);
     }
     const winner = state.winner;
-    // Add terminal reward for the last move of each DQN player
+      // Add terminal reward for the last move of each DQN player
     if (moves.length > 0) {
       const lastMove = moves[moves.length - 1];
       const lastStrategyName = state.turn === 'white' ? matchup.black : matchup.white;
+      const lastWasWhite = lastStrategyName === matchup.white;
       if (lastStrategyName !== 'minimax') {
         const won = (winner === 'white' && lastStrategyName === matchup.white) || 
                     (winner === 'black' && lastStrategyName === matchup.black);
         const reward = computeReward(lastStrategyName, state.board, state.board, lastMove, this.config, true, won);
-        this.buffers[lastStrategyName].add({ board: state.board, from: lastMove.from, to: lastMove.to, turn: 1, reward });
+        // Flip board so model always sees its own "white" perspective
+        const trainBoard = lastWasWhite ? state.board : flipBoardInput(state.board);
+        this.buffers[lastStrategyName].add({ board: trainBoard, from: lastMove.from, to: lastMove.to, turn: 1, reward });
       }
       // Also add terminal reward for the opponent (who lost)
       const oppStrategyName = state.turn === 'white' ? matchup.white : matchup.black;
+      const oppWasWhite = oppStrategyName === matchup.white;
       if (oppStrategyName !== 'minimax') {
         const oppWon = (winner === 'white' && oppStrategyName === matchup.white) || 
                        (winner === 'black' && oppStrategyName === matchup.black);
         const oppReward = computeReward(oppStrategyName, state.board, state.board, lastMove, this.config, true, oppWon);
-        this.buffers[oppStrategyName].add({ board: state.board, from: lastMove.from, to: lastMove.to, turn: -1, reward: oppReward });
+        const oppTrainBoard = oppWasWhite ? state.board : flipBoardInput(state.board);
+        this.buffers[oppStrategyName].add({ board: oppTrainBoard, from: lastMove.from, to: lastMove.to, turn: 1, reward: oppReward });
       }
     }
     
     if (winner === 'white') {
       this.stats[matchup.white].wins++; this.stats[matchup.black].losses++;
       this.statsSinceLastTrain[matchup.white].wins++; this.statsSinceLastTrain[matchup.black].losses++;
-      this.elo[matchup.white] = updateElo(this.elo[matchup.white], this.elo[matchup.black], 1);
-      this.elo[matchup.black] = updateElo(this.elo[matchup.black], this.elo[matchup.white], 0);
+      const whiteEloBefore = this.elo[matchup.white];
+      const blackEloBefore = this.elo[matchup.black];
+      this.elo[matchup.white] = updateElo(whiteEloBefore, blackEloBefore, 1);
+      this.elo[matchup.black] = updateElo(blackEloBefore, whiteEloBefore, 0);
     } else if (winner === 'black') {
       this.stats[matchup.black].wins++; this.stats[matchup.white].losses++;
       this.statsSinceLastTrain[matchup.black].wins++; this.statsSinceLastTrain[matchup.white].losses++;
-      this.elo[matchup.black] = updateElo(this.elo[matchup.black], this.elo[matchup.white], 1);
-      this.elo[matchup.white] = updateElo(this.elo[matchup.white], this.elo[matchup.black], 0);
+      const whiteEloBefore = this.elo[matchup.white];
+      const blackEloBefore = this.elo[matchup.black];
+      this.elo[matchup.black] = updateElo(blackEloBefore, whiteEloBefore, 1);
+      this.elo[matchup.white] = updateElo(whiteEloBefore, blackEloBefore, 0);
     } else {
       this.stats[matchup.white].draws++; this.stats[matchup.black].draws++;
       this.statsSinceLastTrain[matchup.white].draws++; this.statsSinceLastTrain[matchup.black].draws++;
-      this.elo[matchup.white] = updateElo(this.elo[matchup.white], this.elo[matchup.black], 0.5);
-      this.elo[matchup.black] = updateElo(this.elo[matchup.black], this.elo[matchup.white], 0.5);
+      const whiteEloBefore = this.elo[matchup.white];
+      const blackEloBefore = this.elo[matchup.black];
+      this.elo[matchup.white] = updateElo(whiteEloBefore, blackEloBefore, 0.5);
+      this.elo[matchup.black] = updateElo(blackEloBefore, whiteEloBefore, 0.5);
     }
     this._emitStatus();
     const winnerName = winner === 'white' ? matchup.white.charAt(0).toUpperCase() + matchup.white.slice(1) :
@@ -264,10 +287,34 @@ class SelfPlay {
         const meta = JSON.parse(fs.readFileSync('models/meta.json', 'utf8'));
         this.round = meta.round || 0;
         this.elo = meta.elo || this.elo;
-        this.stats = meta.stats || this.stats;
-        this.statsSinceLastTrain = meta.statsSinceLastTrain || { agresor: { wins: 0, losses: 0, draws: 0 }, forteca: { wins: 0, losses: 0, draws: 0 }, minimax: { wins: 0, losses: 0, draws: 0 } };
+        
+        // Handle both old format (agresor_vs_forteca) and new format (agresor/forteca/minimax)
+        const loadedStats = meta.stats || {};
+        if (loadedStats.agresor && loadedStats.forteca && loadedStats.minimax) {
+          // New format - use as-is
+          this.stats = loadedStats;
+        } else {
+          // Old format or missing - use defaults
+          this.stats = {
+            agresor: { wins: 0, losses: 0, draws: 0 },
+            forteca: { wins: 0, losses: 0, draws: 0 },
+            minimax: { wins: 0, losses: 0, draws: 0 }
+          };
+        }
+        
+        const loadedStatsSince = meta.statsSinceLastTrain || {};
+        if (loadedStatsSince.agresor && loadedStatsSince.forteca && loadedStatsSince.minimax) {
+          this.statsSinceLastTrain = loadedStatsSince;
+        } else {
+          this.statsSinceLastTrain = {
+            agresor: { wins: 0, losses: 0, draws: 0 },
+            forteca: { wins: 0, losses: 0, draws: 0 },
+            minimax: { wins: 0, losses: 0, draws: 0 }
+          };
+        }
+        
         this.paramsVersion = meta.paramsVersion || 0;
-        this._runtimeEpsilon = meta.epsilon || { agresor: 1.0, forteca: 1.0 };
+        this._runtimeEpsilon = meta.epsilon || { agresor: 0.3, forteca: 0.3 };
         this.buffers.agresor.load('data/buffer_agresor.json');
         this.buffers.forteca.load('data/buffer_forteca.json');
       }

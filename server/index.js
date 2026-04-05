@@ -248,13 +248,21 @@ app.get('/api/selfplay/status', (req, res) => {
 function proxyToEngine(req, res, path, maxRetries = 3) {
   const http = require('http');
   const postData = JSON.stringify(req.body || {});
+  let responded = false;
+  const respond = (fn, ...args) => {
+    if (responded) return;
+    responded = true;
+    fn(...args);
+  };
   
   const tryProxy = (attempt) => {
+    const timeout = CONFIG.server.fetchTimeoutMs || 10000;
     const options = {
       hostname: CONFIG.server.host,
       port: CONFIG.server.enginePort,
       path: path,
       method: 'POST',
+      timeout: timeout,
       headers: {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(postData)
@@ -266,19 +274,30 @@ function proxyToEngine(req, res, path, maxRetries = 3) {
       proxyRes.on('data', chunk => data += chunk);
       proxyRes.on('end', () => {
         try {
-          res.json(JSON.parse(data));
+          respond(res.json.bind(res), JSON.parse(data));
         } catch (e) {
-          res.status(500).json({ error: 'Engine response parse error' });
+          respond(res.status.bind(res, 500), { error: 'Engine response parse error' });
         }
       });
     });
     
     proxyReq.on('error', (e) => {
+      if (e.code === 'ECONNRESET' || e.code === 'ECONNABORTED') {
+        // Timeout error — treat as retryable
+        if (attempt < maxRetries) {
+          setTimeout(() => tryProxy(attempt + 1), 500 * attempt);
+          return;
+        }
+      }
       if (attempt < maxRetries) {
         setTimeout(() => tryProxy(attempt + 1), 500 * attempt);
       } else {
-        res.status(502).json({ error: 'Engine unavailable after retries' });
+        respond(res.status.bind(res, 502), { error: 'Engine unavailable after retries' });
       }
+    });
+    
+    proxyReq.on('timeout', () => {
+      proxyReq.destroy();
     });
     
     proxyReq.write(postData);
@@ -395,6 +414,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
+    wsLimiter.cleanupSocket(socket.id);
     console.log(`Client disconnected: ${socket.id}`);
   });
 });
