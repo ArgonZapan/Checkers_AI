@@ -35,7 +35,7 @@ const CONFIG = {
         epsilon: 0.3,
         minEpsilon: 0.01,
         epsilonDecay: 0.005,
-        rewardCapture: 0.08,
+        rewardCapture: 0.15,
         rewardAdvance: 0.03,
         rewardPromotion: 0.40,
         rewardWin: 1.0,
