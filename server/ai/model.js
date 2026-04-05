@@ -114,12 +114,12 @@ async function train(model, batch, options = {}) {
         const input = boardToChannels(entry.board);
         const x = tf.tensor2d([input], [1, 256]);
         const pred = model.predict(x);
+        const predMax = tf.max(pred, 1, true);
         const target = tf.tensor2d([[entry.valueTarget]], [1, 1]);
-        // Train on the MAX policy output (best move value)
-        const predMax = pred.max(1, true);
         const l = tf.losses.meanSquaredError(target, predMax);
         x.dispose();
         pred.dispose();
+        predMax.dispose();
         target.dispose();
         return l;
       });
@@ -127,8 +127,9 @@ async function train(model, batch, options = {}) {
       loss = totalLoss.dataSync()[0];
       return totalLoss;
     }, true);
-    if (lossVal) lossVal.dispose();  // Free minimize() return tensor
+    if (lossVal) lossVal.dispose();  // Free the tensor returned by minimize
   }
+  optimizer.dispose();  // Free optimizer variables
 
   return { loss, samples: batch.length };
 }
