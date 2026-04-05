@@ -164,6 +164,13 @@ header .status {
   border-bottom: 1px solid #222;
 }
 
+.h2h-table {
+  width: 100%;
+}
+.h2h-table td:first-child {
+  text-align: left !important;
+}
+
 .loss-chart {
   margin-top: 8px;
 }

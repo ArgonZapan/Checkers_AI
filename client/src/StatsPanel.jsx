@@ -40,8 +40,14 @@ function LossChart({ data, title }) {
   return <canvas ref={canvasRef} width={300} height={80} className="loss-chart" />;
 }
 
-function StatsPanel({ elo = {}, stats = {}, lossHistory = {}, round = 0, trainingActive = false, trainingTimeLeft = 0, bufferSize = {}, statsSinceLastTrain = {}, epsilon = {} }) {
+function StatsPanel({ elo = {}, stats = {}, lossHistory = {}, round = 0, trainingActive = false, trainingTimeLeft = 0, bufferSize = {}, statsSinceLastTrain = {}, epsilon = {}, h2h = {} }) {
   const strategies = ['agresor', 'forteca', 'minimax'];
+  const h2hEntries = Object.entries(h2h || {}).filter(([, v]) => v && typeof v === 'object');
+  const formatMatchup = (key) => {
+    const [a, b] = key.split('_vs_');
+    const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+    return `${cap(a)} vs ${cap(b)}`;
+  };
 
   // Debug: log stats when they change
   useEffect(() => {
@@ -108,6 +114,25 @@ function StatsPanel({ elo = {}, stats = {}, lossHistory = {}, round = 0, trainin
                 <td>{Number(statsSinceLastTrain[s]?.wins ?? 0)}</td>
                 <td>{Number(statsSinceLastTrain[s]?.losses ?? 0)}</td>
                 <td>{Number(statsSinceLastTrain[s]?.draws ?? 0)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="stats-section">
+        <h3>Head to Head</h3>
+        <table className="elo-table h2h-table">
+          <thead>
+            <tr><th>Matchup</th><th>White W</th><th>Black W</th><th>Draw</th></tr>
+          </thead>
+          <tbody>
+            {h2hEntries.map(([key, h]) => (
+              <tr key={key}>
+                <td>{formatMatchup(key)}</td>
+                <td>{h.whiteWins}</td>
+                <td>{h.blackWins}</td>
+                <td>{h.draws}</td>
               </tr>
             ))}
           </tbody>

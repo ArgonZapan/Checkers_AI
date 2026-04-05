@@ -113,6 +113,8 @@ function App() {
           minimax: Number(data.elo.minimax ?? 0)
         } : prev.elo;
         
+        const newH2h = data.h2h || prev.h2h || {};
+        
         return {
           active: data.active ?? prev.active,
           round: data.round ?? prev.round,
@@ -124,6 +126,7 @@ function App() {
             minimax: data.statsSinceLastTrain.minimax ?? prev.statsSinceLastTrain?.minimax ?? { wins: 0, losses: 0, draws: 0 }
           } : prev.statsSinceLastTrain,
           epsilon: data.epsilon ?? prev.epsilon,
+          h2h: newH2h,
           trainingActive: data.trainingActive ?? prev.trainingActive,
           trainingTimeLeft: data.trainingTimeLeft ?? prev.trainingTimeLeft,
           bufferSize: data.bufferSize ?? prev.bufferSize
@@ -167,7 +170,8 @@ function App() {
               forteca: Number(data.elo.forteca ?? 0),
               minimax: Number(data.elo.minimax ?? 0)
             },
-            stats: newStats
+            stats: newStats,
+            h2h: data.h2h || prev.h2h
           };
         });
       }
@@ -271,6 +275,7 @@ function App() {
             bufferSize={selfPlayStatus.bufferSize || {}}
             statsSinceLastTrain={selfPlayStatus.statsSinceLastTrain || {}}
             epsilon={selfPlayStatus.epsilon || { agresor: 1.0, forteca: 1.0 }}
+            h2h={selfPlayStatus.h2h || {}}
           />
           <ParamsPanel
             params={params}

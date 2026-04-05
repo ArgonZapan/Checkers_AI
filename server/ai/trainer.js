@@ -50,13 +50,22 @@ class SelfPlay {
     this._trainingIntervals = null;
     this._trainCount = 0; // track training sessions for periodic checkpoint
     this._lastGameStateEmit = 0; // throttle gameState emit to max 1/sec
+    // H2H stats per matchup (white perspective)
+    this.h2h = {
+      agresor_vs_forteca:   { whiteWins: 0, blackWins: 0, draws: 0 },
+      forteca_vs_agresor:   { whiteWins: 0, blackWins: 0, draws: 0 },
+      agresor_vs_minimax:   { whiteWins: 0, blackWins: 0, draws: 0 },
+      minimax_vs_agresor:   { whiteWins: 0, blackWins: 0, draws: 0 },
+      forteca_vs_minimax:   { whiteWins: 0, blackWins: 0, draws: 0 },
+      minimax_vs_forteca:   { whiteWins: 0, blackWins: 0, draws: 0 }
+    };
   }
 
   _emitStatus(extra = {}) {
     this.io.emit('selfPlayStatus', {
       active: this.active, round: this.round, elo: { ...this.elo },
       stats: { ...this.stats }, statsSinceLastTrain: { ...this.statsSinceLastTrain },
-      epsilon: { ...this._runtimeEpsilon }, ...extra
+      epsilon: { ...this._runtimeEpsilon }, h2h: JSON.parse(JSON.stringify(this.h2h)), ...extra
     });
   }
 
@@ -138,12 +147,12 @@ class SelfPlay {
 
   async _startGameLoop() {
     const matchups = [
-      { white: 'agresor', black: 'forteca', idx: 0 },
-      { white: 'forteca', black: 'agresor', idx: 1 },
-      { white: 'agresor', black: 'minimax', idx: 2 },
-      { white: 'minimax', black: 'agresor', idx: 3 },
-      { white: 'forteca', black: 'minimax', idx: 4 },
-      { white: 'minimax', black: 'forteca', idx: 5 }
+      { white: 'agresor', black: 'forteca', idx: 0, h2hKey: 'agresor_vs_forteca' },
+      { white: 'forteca', black: 'agresor', idx: 1, h2hKey: 'forteca_vs_agresor' },
+      { white: 'agresor', black: 'minimax', idx: 2, h2hKey: 'agresor_vs_minimax' },
+      { white: 'minimax', black: 'agresor', idx: 3, h2hKey: 'minimax_vs_agresor' },
+      { white: 'forteca', black: 'minimax', idx: 4, h2hKey: 'forteca_vs_minimax' },
+      { white: 'minimax', black: 'forteca', idx: 5, h2hKey: 'minimax_vs_forteca' }
     ];
     while (this.active) {
       this.round++;
@@ -240,6 +249,14 @@ class SelfPlay {
       }
     }
     
+    // Record H2H result
+    if (this.h2h[matchup.h2hKey]) {
+      const h = this.h2h[matchup.h2hKey];
+      if (winner === 'white') { h.whiteWins++; }
+      else if (winner === 'black') { h.blackWins++; }
+      else { h.draws++; }
+    }
+
     if (winner === 'white') {
       this.stats[matchup.white].wins++; this.stats[matchup.black].losses++;
       this.statsSinceLastTrain[matchup.white].wins++; this.statsSinceLastTrain[matchup.black].losses++;
@@ -271,7 +288,7 @@ class SelfPlay {
   saveCheckpoint() {
     try {
       const fs = require('fs');
-      const meta = { round: this.round, elo: this.elo, stats: this.stats, statsSinceLastTrain: this.statsSinceLastTrain, paramsVersion: this.paramsVersion, epsilon: this._runtimeEpsilon };
+      const meta = { round: this.round, elo: this.elo, stats: this.stats, statsSinceLastTrain: this.statsSinceLastTrain, paramsVersion: this.paramsVersion, epsilon: this._runtimeEpsilon, h2h: this.h2h };
       if (!fs.existsSync('models')) fs.mkdirSync('models', { recursive: true });
       if (!fs.existsSync('data')) fs.mkdirSync('data', { recursive: true });
       fs.writeFileSync('models/meta.json', JSON.stringify(meta, null, 2));
@@ -315,6 +332,19 @@ class SelfPlay {
         
         this.paramsVersion = meta.paramsVersion || 0;
         this._runtimeEpsilon = meta.epsilon || { agresor: 0.3, forteca: 0.3 };
+        // Load H2H stats or init defaults
+        const loadedH2h = meta.h2h || {};
+        const defaultH2h = {
+          agresor_vs_forteca:   { whiteWins: 0, blackWins: 0, draws: 0 },
+          forteca_vs_agresor:   { whiteWins: 0, blackWins: 0, draws: 0 },
+          agresor_vs_minimax:   { whiteWins: 0, blackWins: 0, draws: 0 },
+          minimax_vs_agresor:   { whiteWins: 0, blackWins: 0, draws: 0 },
+          forteca_vs_minimax:   { whiteWins: 0, blackWins: 0, draws: 0 },
+          minimax_vs_forteca:   { whiteWins: 0, blackWins: 0, draws: 0 }
+        };
+        for (const key of Object.keys(defaultH2h)) {
+          if (loadedH2h[key]) this.h2h[key] = loadedH2h[key];
+        }
         this.buffers.agresor.load('data/buffer_agresor.json');
         this.buffers.forteca.load('data/buffer_forteca.json');
       }
@@ -326,6 +356,14 @@ class SelfPlay {
     this.elo = { agresor: 1500, forteca: 1500, minimax: 1500 };
     this.stats = { agresor: { wins: 0, losses: 0, draws: 0 }, forteca: { wins: 0, losses: 0, draws: 0 }, minimax: { wins: 0, losses: 0, draws: 0 } };
     this.statsSinceLastTrain = { agresor: { wins: 0, losses: 0, draws: 0 }, forteca: { wins: 0, losses: 0, draws: 0 }, minimax: { wins: 0, losses: 0, draws: 0 } };
+    this.h2h = {
+      agresor_vs_forteca:   { whiteWins: 0, blackWins: 0, draws: 0 },
+      forteca_vs_agresor:   { whiteWins: 0, blackWins: 0, draws: 0 },
+      agresor_vs_minimax:   { whiteWins: 0, blackWins: 0, draws: 0 },
+      minimax_vs_agresor:   { whiteWins: 0, blackWins: 0, draws: 0 },
+      forteca_vs_minimax:   { whiteWins: 0, blackWins: 0, draws: 0 },
+      minimax_vs_forteca:   { whiteWins: 0, blackWins: 0, draws: 0 }
+    };
     this.lossHistory = { agresor: [], forteca: [] };
     this.buffers.agresor.clear(); this.buffers.forteca.clear();
     disposeModel(this.models.agresor); disposeModel(this.models.forteca);
@@ -361,7 +399,8 @@ class SelfPlay {
       active: this.active, round: this.round, elo: { ...this.elo }, stats: { ...this.stats },
       statsSinceLastTrain: { ...this.statsSinceLastTrain }, epsilon: { ...this._runtimeEpsilon },
       lossHistory: this.lossHistory,
-      bufferSize: { agresor: this.buffers.agresor.size(), forteca: this.buffers.forteca.size() }
+      bufferSize: { agresor: this.buffers.agresor.size(), forteca: this.buffers.forteca.size() },
+      h2h: JSON.parse(JSON.stringify(this.h2h))
     };
   }
 }
