@@ -167,7 +167,7 @@ class SelfPlay {
         let boardInput = state.board;
         if (!isWhite) boardInput = flipBoardInput(state.board);
         const result = await predict(model, boardInput, state.legalMoves, eps);
-        if (state.legalMoves[result.moveIdx]) {
+        if (typeof result.moveIdx === 'number' && result.moveIdx >= 0 && result.moveIdx < state.legalMoves.length && state.legalMoves[result.moveIdx]) {
           chosenMove = state.legalMoves[result.moveIdx];
         } else {
           const fallback = await localFetch('/api/engine/best-move', 'POST', { depth: 4 });

@@ -127,6 +127,7 @@ async function train(model, batch, options = {}) {
       loss = totalLoss.dataSync()[0];
       return totalLoss;
     }, true);
+    if (lossVal) lossVal.dispose();  // Free minimize() return tensor
   }
 
   return { loss, samples: batch.length };
