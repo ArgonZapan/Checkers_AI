@@ -78,9 +78,17 @@ class SelfPlay {
   _startParallelTraining() {
     this._trainingIntervals = [];
     for (const name of ['agresor', 'forteca']) {
+      this['_training_' + name] = false; // running guard
       const interval = setInterval(async () => {
         if (!this.active) return;
-        await this._trainModel(name);
+        // Skip if previous training still running — prevents overlap/race condition on TF.js tensors
+        if (this['_training_' + name]) return;
+        this['_training_' + name] = true;
+        try {
+          await this._trainModel(name);
+        } finally {
+          this['_training_' + name] = false;
+        }
       }, 30000);
       this._trainingIntervals.push(interval);
     }
@@ -223,13 +231,17 @@ class SelfPlay {
     if (winner === 'white') {
       this.stats[matchup.white].wins++; this.stats[matchup.black].losses++;
       this.statsSinceLastTrain[matchup.white].wins++; this.statsSinceLastTrain[matchup.black].losses++;
-      this.elo[matchup.white] = updateElo(this.elo[matchup.white], this.elo[matchup.black], 1);
-      this.elo[matchup.black] = updateElo(this.elo[matchup.black], this.elo[matchup.white], 0);
+      const whiteEloBefore = this.elo[matchup.white];
+      const blackEloBefore = this.elo[matchup.black];
+      this.elo[matchup.white] = updateElo(whiteEloBefore, blackEloBefore, 1);
+      this.elo[matchup.black] = updateElo(blackEloBefore, whiteEloBefore, 0);
     } else if (winner === 'black') {
       this.stats[matchup.black].wins++; this.stats[matchup.white].losses++;
       this.statsSinceLastTrain[matchup.black].wins++; this.statsSinceLastTrain[matchup.white].losses++;
-      this.elo[matchup.black] = updateElo(this.elo[matchup.black], this.elo[matchup.white], 1);
-      this.elo[matchup.white] = updateElo(this.elo[matchup.white], this.elo[matchup.black], 0);
+      const whiteEloBefore = this.elo[matchup.white];
+      const blackEloBefore = this.elo[matchup.black];
+      this.elo[matchup.black] = updateElo(blackEloBefore, whiteEloBefore, 1);
+      this.elo[matchup.white] = updateElo(whiteEloBefore, blackEloBefore, 0);
     } else {
       this.stats[matchup.white].draws++; this.stats[matchup.black].draws++;
       this.statsSinceLastTrain[matchup.white].draws++; this.statsSinceLastTrain[matchup.black].draws++;
