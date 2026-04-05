@@ -129,7 +129,8 @@ async function train(model, batch, options = {}) {
     }, true);
     if (lossVal) lossVal.dispose();  // Free the tensor returned by minimize
   }
-  optimizer.dispose();  // Free optimizer variables
+  // Note: TF.js optimizer internal variables (momentum) are freed when
+  // the model is disposed via disposeModel(). No explicit cleanup needed.
 
   return { loss, samples: batch.length };
 }

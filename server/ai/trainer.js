@@ -247,8 +247,10 @@ class SelfPlay {
     } else {
       this.stats[matchup.white].draws++; this.stats[matchup.black].draws++;
       this.statsSinceLastTrain[matchup.white].draws++; this.statsSinceLastTrain[matchup.black].draws++;
-      this.elo[matchup.white] = updateElo(this.elo[matchup.white], this.elo[matchup.black], 0.5);
-      this.elo[matchup.black] = updateElo(this.elo[matchup.black], this.elo[matchup.white], 0.5);
+      const whiteEloBefore = this.elo[matchup.white];
+      const blackEloBefore = this.elo[matchup.black];
+      this.elo[matchup.white] = updateElo(whiteEloBefore, blackEloBefore, 0.5);
+      this.elo[matchup.black] = updateElo(blackEloBefore, whiteEloBefore, 0.5);
     }
     this._emitStatus();
     const winnerName = winner === 'white' ? matchup.white.charAt(0).toUpperCase() + matchup.white.slice(1) :
