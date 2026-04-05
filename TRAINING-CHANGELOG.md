@@ -180,3 +180,16 @@ Cel: DQN musi pokonać Minimax depth 3 po 500 rundach (ELO DQN > ELO Minimax).
 - **Hipoteza:** Poprzedni agent udokumentował zmianę w changelogu ale nie zapisał jej w config.js. Więc Forteca nadal używała rewardAdvance 0.03 — zbyt niska nagroda za postępowanie pionków, kluczowe dla formowania muru obronnego. Podniesienie do 0.10 poprawi defensywne pozycjonowanie Forteca.
 - **Wyniki poprzedniego:** Round 46/500 — agresor ELO=1320 (36W/139L/7D), forteca ELO=1285 (49W/126L/7D), minimax ELO=1963 (180W/0L/0D). Forteca nieco lepsza od agresora ale obie daleko od minimax.
 - **Następny krok:** Serwer uruchomiony z nowym configiem, selfplay started. Czekaj na wyniki po dalszych rundach.
+
+---
+
+### [2026-04-05 08:45 UTC] Monitoring: Round 337/500 — Forteca ELO catching up, config drift noted
+- **Plik:** brak zmian (monitor only)
+- **Wyniki:** Round 337/500 — agresor ELO=1378.6 (305W/995L/46D), forteca ELO=1378.2 (331W/969L/45D), minimax ELO=2197.4 (1331W/3L/9D). Forteca +93 ELO od ostatniego wpisu (08:35), agresor +58 ELO. Forteca wyprzedza agresora — rewardAdvance fix działa.
+- **Config drift wykryty:** 
+  - epsilonDecay: 0.005 w config.js (wpis z 06:04 dokumentował 0.0005 — nigdy nie zapisano)
+  - gamma: 0.95 w config.js (wpis z 02:50 dokumentował 0.99 — nigdy nie zapisano, utracone przy restarcie)
+  - rewardCapture forteca: 0.15 ✅ OK
+  - rewardAdvance forteca: 0.10 ✅ OK (naprawione 08:35)
+- **Epsilon:** 0.01 dla obu (minimum reached — decay too fast despite planned 0.0005, bo config miał 0.005)
+- **Następny krok:** Po 500 rundach: (1) Zmierz wyniki, (2) Napraw config drift — ustaw gamma=0.99 i epsilonDecay=0.0005 w config.js, (3) Zrestartuj z poprawnymi parametrami
