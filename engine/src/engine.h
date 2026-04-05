@@ -38,9 +38,9 @@ public:
 private:
     Move lastMove_;
     bool hasLastMove_ = false;
-    std::vector<std::string> positionHistory_;  // position hashes for 3x repetition
+    std::vector<uint64_t> positionHistory_;  // position hashes for 3x repetition
 
-    std::string computeHash(const Board& b) const;
+    uint64_t computeZobristHash(const Board& b) const;
     bool isThreefoldRepetition() const;
     bool isInsufficientMaterial() const;
 };
