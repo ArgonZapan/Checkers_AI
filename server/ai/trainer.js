@@ -106,7 +106,7 @@ class SelfPlay {
 
     while (Date.now() - startTime < timeLimit && this.active) {
       if (buf.size() < 64) { console.log(`[Training] Buffer ${name} too small (${buf.size()}), stopping`); break; }
-      const batch = buf.samplePrioritized(64);
+      const batch = buf.sampleRandom(64);
       const trainBatch = batch.map(entry => ({ ...entry, valueTarget: entry.reward }));
       const result = await train(this.models[name], trainBatch, { lr: 0.0005, epochs: 5, gamma: this.config.ai.gamma });
       this.lossHistory[name].push(result.loss);
