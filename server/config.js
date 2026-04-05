@@ -13,8 +13,8 @@ const CONFIG = {
   ai: {
     defaultEpsilon: 0.3,
     minEpsilon: 0.01,
-    epsilonDecay: 0.01,
-    gamma: 0.95,
+    epsilonDecay: 0.0005,
+    gamma: 0.99,
     bufferSize: 500000,
     strategies: Object.freeze({
       agresor: Object.freeze({
@@ -22,7 +22,7 @@ const CONFIG = {
         weights: Object.freeze({ material: 0.55, position: 0.15, threat: 0.20, tempo: 0.10 }),
         epsilon: 0.3,
         minEpsilon: 0.01,
-        epsilonDecay: 0.005,
+        epsilonDecay: 0.0005,
         rewardCapture: 0.15,
         rewardAdvance: 0.10,
         rewardPromotion: 0.20,

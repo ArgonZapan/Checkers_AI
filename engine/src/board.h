@@ -59,7 +59,7 @@ struct Board {
     Color pieceColor(int r, int c) const {
         if (white & sqMask(r, c)) return WHITE;
         if (black & sqMask(r, c)) return BLACK;
-        return WHITE;
+        return (Color)0;  // EMPTY — puste pole, nie WHITE
     }
 
     bool isKing(int r, int c) const { return kings & sqMask(r, c); }
