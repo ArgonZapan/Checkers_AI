@@ -277,10 +277,34 @@ class SelfPlay {
         const meta = JSON.parse(fs.readFileSync('models/meta.json', 'utf8'));
         this.round = meta.round || 0;
         this.elo = meta.elo || this.elo;
-        this.stats = meta.stats || this.stats;
-        this.statsSinceLastTrain = meta.statsSinceLastTrain || { agresor: { wins: 0, losses: 0, draws: 0 }, forteca: { wins: 0, losses: 0, draws: 0 }, minimax: { wins: 0, losses: 0, draws: 0 } };
+        
+        // Handle both old format (agresor_vs_forteca) and new format (agresor/forteca/minimax)
+        const loadedStats = meta.stats || {};
+        if (loadedStats.agresor && loadedStats.forteca && loadedStats.minimax) {
+          // New format - use as-is
+          this.stats = loadedStats;
+        } else {
+          // Old format or missing - use defaults
+          this.stats = {
+            agresor: { wins: 0, losses: 0, draws: 0 },
+            forteca: { wins: 0, losses: 0, draws: 0 },
+            minimax: { wins: 0, losses: 0, draws: 0 }
+          };
+        }
+        
+        const loadedStatsSince = meta.statsSinceLastTrain || {};
+        if (loadedStatsSince.agresor && loadedStatsSince.forteca && loadedStatsSince.minimax) {
+          this.statsSinceLastTrain = loadedStatsSince;
+        } else {
+          this.statsSinceLastTrain = {
+            agresor: { wins: 0, losses: 0, draws: 0 },
+            forteca: { wins: 0, losses: 0, draws: 0 },
+            minimax: { wins: 0, losses: 0, draws: 0 }
+          };
+        }
+        
         this.paramsVersion = meta.paramsVersion || 0;
-        this._runtimeEpsilon = meta.epsilon || { agresor: 1.0, forteca: 1.0 };
+        this._runtimeEpsilon = meta.epsilon || { agresor: 0.3, forteca: 0.3 };
         this.buffers.agresor.load('data/buffer_agresor.json');
         this.buffers.forteca.load('data/buffer_forteca.json');
       }
