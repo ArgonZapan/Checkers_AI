@@ -183,7 +183,9 @@ class SelfPlay {
           // Compute reward AFTER move using boardBefore and boardAfter
           if (strategyName !== 'minimax') {
             const reward = computeReward(strategyName, boardBefore, state.board, chosenMove, this.config);
-            this.buffers[strategyName].add({ board: boardBefore, from: chosenMove.from, to: chosenMove.to, turn: isWhite ? 1 : -1, reward });
+            // Model always trains from its own "white" perspective
+            const trainBoard = isWhite ? boardBefore : flipBoardInput(boardBefore);
+            this.buffers[strategyName].add({ board: trainBoard, from: chosenMove.from, to: chosenMove.to, turn: 1, reward });
           }
         } catch (e) { console.error('Move error:', e.message); break; }
       }
@@ -193,23 +195,28 @@ class SelfPlay {
       if (totalDelay > 0) await delay(totalDelay);
     }
     const winner = state.winner;
-    // Add terminal reward for the last move of each DQN player
+      // Add terminal reward for the last move of each DQN player
     if (moves.length > 0) {
       const lastMove = moves[moves.length - 1];
       const lastStrategyName = state.turn === 'white' ? matchup.black : matchup.white;
+      const lastWasWhite = lastStrategyName === matchup.white;
       if (lastStrategyName !== 'minimax') {
         const won = (winner === 'white' && lastStrategyName === matchup.white) || 
                     (winner === 'black' && lastStrategyName === matchup.black);
         const reward = computeReward(lastStrategyName, state.board, state.board, lastMove, this.config, true, won);
-        this.buffers[lastStrategyName].add({ board: state.board, from: lastMove.from, to: lastMove.to, turn: 1, reward });
+        // Flip board so model always sees its own "white" perspective
+        const trainBoard = lastWasWhite ? state.board : flipBoardInput(state.board);
+        this.buffers[lastStrategyName].add({ board: trainBoard, from: lastMove.from, to: lastMove.to, turn: 1, reward });
       }
       // Also add terminal reward for the opponent (who lost)
       const oppStrategyName = state.turn === 'white' ? matchup.white : matchup.black;
+      const oppWasWhite = oppStrategyName === matchup.white;
       if (oppStrategyName !== 'minimax') {
         const oppWon = (winner === 'white' && oppStrategyName === matchup.white) || 
                        (winner === 'black' && oppStrategyName === matchup.black);
         const oppReward = computeReward(oppStrategyName, state.board, state.board, lastMove, this.config, true, oppWon);
-        this.buffers[oppStrategyName].add({ board: state.board, from: lastMove.from, to: lastMove.to, turn: -1, reward: oppReward });
+        const oppTrainBoard = oppWasWhite ? state.board : flipBoardInput(state.board);
+        this.buffers[oppStrategyName].add({ board: oppTrainBoard, from: lastMove.from, to: lastMove.to, turn: 1, reward: oppReward });
       }
     }
     
