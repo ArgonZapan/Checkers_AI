@@ -48,6 +48,8 @@ class SelfPlay {
     this.lossHistory = { agresor: [], forteca: [] };
     this._runtimeEpsilon = { agresor: 0.3, forteca: 0.3 };
     this._trainingIntervals = null;
+    this._trainCount = 0; // track training sessions for periodic checkpoint
+    this._lastGameStateEmit = 0; // throttle gameState emit to max 1/sec
   }
 
   _emitStatus(extra = {}) {
@@ -104,12 +106,10 @@ class SelfPlay {
       this.lossHistory[name].push(result.loss);
       if (this.lossHistory[name].length > 1000) this.lossHistory[name].shift();
       tick++;
-      this.io.emit('train', { model: name, loss: result.loss });
+      if (tick % 10 === 0) this.io.emit('train', { model: name, loss: result.loss });
       if (tick % 50 === 0) console.log(`[Training] ${name} iteration ${tick}, loss: ${result.loss.toFixed(4)}`);
       const elapsed = Math.floor((Date.now() - startTime) / 1000);
-      this.io.emit('trainingStatus', { active: true, model: name, timeLeft: Math.max(0, 20 - elapsed) });
-      await Promise.resolve();
-      await delay(200);
+      if (tick % 50 === 0) this.io.emit('trainingStatus', { active: true, model: name, timeLeft: Math.max(0, 20 - elapsed) });
     }
     const finalLoss = this.lossHistory[name].length > 0 ? this.lossHistory[name][this.lossHistory[name].length - 1] : 0;
     console.log(`[Training] ${name} complete (${tick} iters, ${Date.now() - startTime}ms), loss: ${finalLoss.toFixed(4)}, eps: ${this._runtimeEpsilon[name].toFixed(4)}`);
@@ -121,7 +121,11 @@ class SelfPlay {
     this.io.emit('trainingStatus', { active: false, model: name, timeLeft: 0 });
     this.io.emit('train', { model: name, loss: finalLoss, done: true });
     this._emitStatus(); // Emit updated stats with reset statsSinceLastTrain
-    this.saveCheckpoint();
+    this._trainCount++;
+    if (this._trainCount % 5 === 0) {
+      console.log(`[Training] Saving checkpoint (every 5th training, count: ${this._trainCount})`);
+      this.saveCheckpoint();
+    }
   }
 
   async _startGameLoop() {
@@ -147,6 +151,8 @@ class SelfPlay {
         await this._playSingleGame(matchup);
       }
       this.io.emit('roundComplete', { round: this.round, elo: { ...this.elo }, stats: { ...this.stats }, statsSinceLastTrain: { ...this.statsSinceLastTrain }, epsilon: { ...this._runtimeEpsilon } });
+      // Save checkpoint after each round (meta.json + buffers)
+      this.saveCheckpoint();
     }
   }
 
@@ -187,7 +193,11 @@ class SelfPlay {
           }
         } catch (e) { console.error('Move error:', e.message); break; }
       }
-      this.io.emit('gameState', { game: matchup.idx + 1, board: state.board, turn: state.turn, gameOver: state.gameOver, lastMove: chosenMove ? { from: chosenMove.from, to: chosenMove.to } : null });
+      const now = Date.now();
+      if (now - this._lastGameStateEmit >= 1000) {
+        this.io.emit('gameState', { game: matchup.idx + 1, board: state.board, turn: state.turn, gameOver: state.gameOver, lastMove: chosenMove ? { from: chosenMove.from, to: chosenMove.to } : null });
+        this._lastGameStateEmit = now;
+      }
       const baseDelay = this.config.server.speedMode === 'normal' ? this.config.server.normalModeDelayMs : 0;
       const totalDelay = this.config.server.aiMoveDelayMs ?? baseDelay;
       if (totalDelay > 0) await delay(totalDelay);

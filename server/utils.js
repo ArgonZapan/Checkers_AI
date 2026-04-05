@@ -1,29 +1,6 @@
 const CONFIG = require('./config');
 
 /**
- * Make HTTP request to C++ engine with timeout
- */
-async function cppFetch(endpoint, method = 'POST', body = null) {
-  const url = `${CONFIG.server.cppBase}${endpoint}`;
-  const options = {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    signal: AbortSignal.timeout(CONFIG.server.fetchTimeoutMs)
-  };
-
-  if (body) {
-    options.body = JSON.stringify(body);
-  }
-
-  const response = await fetch(url, options);
-  if (!response.ok) {
-    throw new Error(`C++ Engine error: ${response.status} ${response.statusText}`);
-  }
-
-  return response.json();
-}
-
-/**
  * Simple delay in milliseconds
  */
 function delay(ms) {
@@ -170,11 +147,8 @@ function isAllowedOrigin(origin, allowedOrigin) {
 }
 
 module.exports = {
-  cppFetch,
   delay,
   computeReward,
   SimpleRateLimiter,
-  WsRateLimiter,
-  sanitizeStatePayload,
-  isAllowedOrigin
+  WsRateLimiter
 };

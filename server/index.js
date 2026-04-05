@@ -8,7 +8,7 @@ const fs = require('fs');
 const CONFIG = require('./config');
 const { SelfPlay } = require('./ai/trainer');
 const { createModel, predict, flipBoardInput } = require('./ai/model');
-const { cppFetch, delay, SimpleRateLimiter, WsRateLimiter, sanitizeStatePayload } = require('./utils');
+const { SimpleRateLimiter, WsRateLimiter } = require('./utils');
 
 // C++ Engine runs on port 8080 (checkers-server-new.exe)
 // Node.js proxies /api/move and /api/engine/best-move to it
