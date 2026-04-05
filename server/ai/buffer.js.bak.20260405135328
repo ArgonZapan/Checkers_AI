@@ -8,7 +8,7 @@ class ReplayBuffer {
   }
 
   add(entry) {
-    // {board: int[64], from: [r,c], to: [r,c], turn: ±1, reward: float, next_board: int[64], isTerminal: boolean}
+    // {board: int[64], from: [r,c], to: [r,c], turn: ±1, reward: float}
     if (this.buffer.length >= this.maxSize) {
       this.buffer.shift(); // FIFO
     }

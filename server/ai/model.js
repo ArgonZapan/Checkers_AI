@@ -75,6 +75,21 @@ async function predict(model, boardInput, legalMoves, epsilon = 0.3) {
   return { moveIdx, value, probs, random: false };
 }
 
+async function getStateValue(model, boardInput) {
+  // Compute V(s) = max_a Q(s,a) for a given board state (no exploration)
+  const channels = boardToChannels(boardInput);
+  const input = tf.tensor2d([channels], [1, 256]);
+  const prediction = model.predict(input);
+  const values = await prediction.data();
+  input.dispose();
+  prediction.dispose();
+
+  // V(s) = max over all Q-values (32 outputs from policy head)
+  const allValues = Array.from(values);
+  const maxQ = Math.max(...allValues);
+  return maxQ;
+}
+
 function boardToChannels(board) {
   const channels = new Float32Array(256);
   for (let i = 0; i < 64; i++) {
@@ -142,6 +157,7 @@ function disposeModel(model) {
 module.exports = {
   createModel,
   predict,
+  getStateValue,
   train,
   disposeModel,
   boardToChannels,
