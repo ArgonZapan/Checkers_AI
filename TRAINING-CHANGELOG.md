@@ -171,3 +171,12 @@ Cel: DQN musi pokonać Minimax depth 3 po 500 rundach (ELO DQN > ELO Minimax).
 - **Hipoteza:** Higher rewardAdvance will strengthen Forteca defensive positioning by rewarding piece advancement needed for wall/chain formation, improving ELO vs minimax
 - **Wyniki poprzedniego:** brak wyników
 - **Następny krok:** Observe Forteca ELO vs minimax over next training sessions; if no improvement, test 0.15
+
+---
+
+### [2026-04-05 08:35 UTC] Fix: Apply Forteca rewardAdvance 0.03→0.10 (documented but never applied to config.js)
+- **Plik:** `server/config.js`
+- **Zmiana:** rewardAdvance: 0.03 → 0.10 (forteca only, agresor unchanged at 0.10)
+- **Hipoteza:** Poprzedni agent udokumentował zmianę w changelogu ale nie zapisał jej w config.js. Więc Forteca nadal używała rewardAdvance 0.03 — zbyt niska nagroda za postępowanie pionków, kluczowe dla formowania muru obronnego. Podniesienie do 0.10 poprawi defensywne pozycjonowanie Forteca.
+- **Wyniki poprzedniego:** Round 46/500 — agresor ELO=1320 (36W/139L/7D), forteca ELO=1285 (49W/126L/7D), minimax ELO=1963 (180W/0L/0D). Forteca nieco lepsza od agresora ale obie daleko od minimax.
+- **Następny krok:** Serwer uruchomiony z nowym configiem, selfplay started. Czekaj na wyniki po dalszych rundach.
