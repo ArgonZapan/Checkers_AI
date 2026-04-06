@@ -76,6 +76,7 @@ async function predict(model, boardInput, legalMoves, epsilon = 0.3) {
 }
 
 async function getStateValue(model, boardInput) {
+  if (!model) return 0; // Guard for uninitialized models
   // Compute V(s) = max_a Q(s,a) for a given board state (no exploration)
   const channels = boardToChannels(boardInput);
   const input = tf.tensor2d([channels], [1, 256]);
@@ -119,35 +120,59 @@ function flipBoardInput(board) {
 }
 
 async function train(model, batch, options = {}) {
-  const { lr = 0.001, epochs = 1, gamma = 0.95 } = options;
+  const { lr = 0.001, epochs = 1, gamma = 0.95, subBatchSize = 16 } = options;
   const optimizer = tf.train.adam(lr);
 
-  let loss = 0;
-  for (let epoch = 0; epoch < epochs; epoch++) {
-    const lossVal = optimizer.minimize(() => {
-      const losses = batch.map(entry => {
-        const input = boardToChannels(entry.board);
-        const x = tf.tensor2d([input], [1, 256]);
-        const pred = model.predict(x);
-        const predMax = tf.max(pred, 1, true);
-        const target = tf.tensor2d([[entry.valueTarget]], [1, 1]);
-        const l = tf.losses.meanSquaredError(target, predMax);
-        x.dispose();
-        pred.dispose();
-        predMax.dispose();
-        target.dispose();
-        return l;
-      });
-      const totalLoss = losses.reduce((a, b) => a.add(b), tf.scalar(0));
-      loss = totalLoss.dataSync()[0];
-      return totalLoss;
-    }, true);
-    if (lossVal) lossVal.dispose();  // Free the tensor returned by minimize
-  }
-  // Note: TF.js optimizer internal variables (momentum) are freed when
-  // the model is disposed via disposeModel(). No explicit cleanup needed.
+  // Split batch into sub-batches to yield event loop and keep HTTP responsive
+  let totalLoss = 0;
+  let totalSamples = 0;
 
-  return { loss, samples: batch.length };
+  for (let epoch = 0; epoch < epochs; epoch++) {
+    for (let start = 0; start < batch.length; start += subBatchSize) {
+      const end = Math.min(start + subBatchSize, batch.length);
+      const subBatch = batch.slice(start, end);
+
+      // Pre-allocate tensors for this sub-batch
+      const inputs = new Array(end - start);
+      const targets = new Array(end - start);
+      for (let i = 0; i < subBatch.length; i++) {
+        const entry = subBatch[i];
+        const ch = boardToChannels(entry.board);
+        inputs[i] = tf.tensor2d([ch], [1, 256]);
+        targets[i] = tf.tensor2d([[entry.valueTarget]], [1, 1]);
+      }
+
+      const lossVal = optimizer.minimize(() => {
+        const losses = [];
+        for (let i = 0; i < inputs.length; i++) {
+          const x = inputs[i];
+          const pred = model.predict(x);
+          const predMax = tf.max(pred, 1, true);
+          const target = targets[i];
+          const l = tf.losses.meanSquaredError(target, predMax);
+          pred.dispose();
+          predMax.dispose();
+          losses.push(l);
+        }
+        const total = losses.reduce((a, b) => a.add(b), tf.scalar(0));
+        return total;
+      }, true);
+      if (lossVal) {
+        totalLoss = lossVal.dataSync()[0];
+        lossVal.dispose();
+      }
+      totalSamples += inputs.length;
+
+      // Cleanup sub-batch tensors
+      for (const t of inputs) { if (t) t.dispose(); }
+      for (const t of targets) { if (t) t.dispose(); }
+
+      // Yield to event loop every sub-batch
+      await new Promise(r => setImmediate(r));
+    }
+  }
+
+  return { loss: totalLoss, samples: totalSamples };
 }
 
 function disposeModel(model) {

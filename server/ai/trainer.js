@@ -1,8 +1,105 @@
 const CONFIG = require('../config');
 const { ReplayBuffer } = require('./buffer');
-const { createModel, predict, getStateValue, train, disposeModel, flipBoardInput } = require('./model');
+const { createModel, predict, getStateValue, disposeModel, flipBoardInput, boardToChannels } = require('./model');
 const { delay, computeReward } = require('../utils');
+const { fork } = require('child_process');
+const path = require('path');
+const fs = require('fs');
 
+// ── TrainingWorker: wraps a forked subprocess ──────────────────────────
+class TrainingWorker {
+  constructor(name) {
+    this.name = name;
+    this.proc = null;
+    this.ready = false;
+    this.pending = null; // { resolve, reject, timeout }
+  }
+
+  start() {
+    this.proc = fork(path.join(__dirname, 'train-worker.js'), {
+      stdio: ['pipe', 'pipe', 'pipe', 'ipc']
+    });
+    this.proc.stdout?.on('data', d => console.log(`[Worker:${this.name}] ${d.toString().trim()}`));
+    this.proc.stderr?.on('data', d => console.error(`[Worker:${this.name}] ${d.toString().trim()}`));
+    this.proc.on('exit', (code) => console.log(`[Worker:${this.name}] exited ${code}`));
+    this.proc.on('disconnect', () => console.log(`[Worker:${this.name}] disconnected`));
+    this.proc.on('message', (msg) => this._onMessage(msg));
+  }
+
+  _onMessage(msg) {
+    if (msg.status === 'ready' && this.pending) {
+      const p = this.pending;
+      this.pending = null;
+      this.ready = true;
+      p.resolve(msg);
+      return;
+    }
+    if (msg.cmd === 'weights' && this.pending) {
+      const p = this.pending;
+      this.pending = null;
+      p.resolve(msg);
+      return;
+    }
+    if (msg.cmd === 'train_result' && this.pending) {
+      const p = this.pending;
+      this.pending = null;
+      p.resolve(msg);
+      return;
+    }
+    if (msg.status === 'weights_set' && this.pending) {
+      const p = this.pending;
+      this.pending = null;
+      p.resolve(msg);
+      return;
+    }
+  }
+
+  _send(msg) {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending = null;
+        reject(new Error(`Worker:${this.name} timeout`));
+      }, 45000);
+      this.pending = { resolve, reject, timeout };
+      this.proc.send(msg);
+    });
+  }
+
+  async init(weightsPath) {
+    await this._send({ cmd: 'init', name: this.name, weightsPath });
+  }
+
+  async train(batch, opts) {
+    const { lr, gamma, epochs, subBatchSize, weightsPath } = opts;
+    const result = await this._send({
+      cmd: 'train', batch, lr, gamma, epochs, subBatchSize, weightsPath
+    });
+    if (result.error) throw new Error(result.error);
+    return result;
+  }
+
+  async syncWeightsTo(model) {
+    const msg = await this._send({ cmd: 'get_weights' });
+    if (msg.error) throw new Error(msg.error);
+    model.setWeights(msg.weights.map(w => {
+      // Handle nested arrays (e.g. kernels) and flat arrays (biases)
+      return Array.isArray(w[0]) ? tf.tensor2d(w) : tf.tensor(w);
+    }));
+  }
+
+  stop() {
+    if (this.pending) {
+      this.pending.reject(new Error('Worker shutting down'));
+      this.pending = null;
+    }
+    if (this.proc) {
+      try { this.proc.send({ cmd: 'shutdown' }); } catch(_) {}
+      this.proc.kill();
+    }
+  }
+}
+
+// ── SelfPlay ────────────────────────────────────────────────────────────
 async function localFetch(endpoint, method = 'POST', body = null) {
   const url = `http://127.0.0.1:${CONFIG.server.port}${endpoint}`;
   const options = {
@@ -41,16 +138,24 @@ class SelfPlay {
       agresor: new ReplayBuffer(config.ai.bufferSize),
       forteca: new ReplayBuffer(config.ai.bufferSize)
     };
+
+    // Inference models (main process — never call train() on these)
     this.models = {
-      agresor: createModel(256, 4, 256, 'relu'),  // Larger network for agresor
+      agresor: createModel(256, 4, 256, 'relu'),
       forteca: createModel(256, 3, 128, 'relu')
     };
+
+    // Training workers (forked subprocesses)
+    this.workers = {
+      agresor: new TrainingWorker('agresor'),
+      forteca: new TrainingWorker('forteca')
+    };
+
     this.lossHistory = { agresor: [], forteca: [] };
     this._runtimeEpsilon = { agresor: 0.3, forteca: 0.3 };
     this._trainingIntervals = null;
-    this._trainCount = 0; // track training sessions for periodic checkpoint
-    this._lastGameStateEmit = 0; // throttle gameState emit to max 1/sec
-    // H2H stats per matchup (white perspective)
+    this._trainCount = 0;
+    this._lastGameStateEmit = 0;
     this.h2h = {
       agresor_vs_forteca:   { whiteWins: 0, blackWins: 0, draws: 0 },
       forteca_vs_agresor:   { whiteWins: 0, blackWins: 0, draws: 0 },
@@ -61,6 +166,36 @@ class SelfPlay {
     };
   }
 
+  // ── Worker lifecycle ────────────────────────────────────────────────
+  async startWorkers() {
+    for (const name of ['agresor', 'forteca']) {
+      const worker = this.workers[name];
+      worker.start();
+      const weightsPath = `models/${name}.json`;
+      await worker.init(fs.existsSync(weightsPath) ? weightsPath : null);
+      console.log(`[Trainer] Worker [${name}] initialized`);
+    }
+  }
+
+  stopWorkers() {
+    for (const name of ['agresor', 'forteca']) {
+      this.workers[name].stop();
+    }
+  }
+
+  // Sync inference models ← worker models after training
+  async syncAllWeights() {
+    for (const name of ['agresor', 'forteca']) {
+      try {
+        await this.workers[name].syncWeightsTo(this.models[name]);
+        console.log(`[Trainer] Synced weights → main model [${name}]`);
+      } catch (e) {
+        console.error(`[Trainer] Sync failed for ${name}:`, e);
+      }
+    }
+  }
+
+  // ── Status / Start / Stop ──────────────────────────────────────────
   _emitStatus(extra = {}) {
     this.io.emit('selfPlayStatus', {
       active: this.active, round: this.round, elo: { ...this.elo },
@@ -72,6 +207,7 @@ class SelfPlay {
   async start() {
     if (this.active) return;
     this.active = true;
+    await this.startWorkers();
     this._emitStatus();
     this._startParallelTraining();
     await this._startGameLoop();
@@ -83,20 +219,23 @@ class SelfPlay {
       for (const interval of this._trainingIntervals) { if (interval) clearInterval(interval); }
       this._trainingIntervals = null;
     }
+    this.stopWorkers();
     this._emitStatus();
   }
 
+  // ── Parallel training via workers ──────────────────────────────────
   _startParallelTraining() {
     this._trainingIntervals = [];
     for (const name of ['agresor', 'forteca']) {
-      this['_training_' + name] = false; // running guard
+      this['_training_' + name] = false;
       const interval = setInterval(async () => {
         if (!this.active) return;
-        // Skip if previous training still running — prevents overlap/race condition on TF.js tensors
-        if (this['_training_' + name]) return;
+        if (this['_training_' + name]) return; // still running
         this['_training_' + name] = true;
         try {
           await this._trainModel(name);
+        } catch (e) {
+          console.error(`[Training] ${name} error:`, e);
         } finally {
           this['_training_' + name] = false;
         }
@@ -107,52 +246,56 @@ class SelfPlay {
 
   async _trainModel(name) {
     const warmup = this.config.ai.warmupRounds || 0;
-    if (this.round <= warmup) return; // Skip training during warmup rounds
+    if (this.round <= warmup) return;
+
     const buf = this.buffers[name];
     if (buf.size() < 64) return;
-    const startTime = Date.now();
-    const timeLimit = 20000; // 20 seconds
-    let tick = 0;
-    this.io.emit('trainingStatus', { active: true, model: name, timeLeft: 20 });
-    console.log(`[Training] Starting training for ${name}, buffer size: ${buf.size()}`);
-    // Don't reset statsSinceLastTrain here - reset at end of training
 
-    while (Date.now() - startTime < timeLimit && this.active) {
-      if (buf.size() < 64) { console.log(`[Training] Buffer ${name} too small (${buf.size()}), stopping`); break; }
-      const batch = buf.samplePrioritized(64);
-      // Compute TD targets with Bellman backup
-      const gamma = this.config.ai.gamma;
-      const trainBatch = [];
-      for (const entry of batch) {
-        let valueTarget;
-        if (entry.isTerminal) {
-          valueTarget = entry.reward;
-        } else {
-          // TD target: reward + gamma * V(next_board)
-          const nextValue = await getStateValue(this.models[name], entry.next_board);
-          valueTarget = entry.reward + gamma * nextValue;
-        }
-        trainBatch.push({ ...entry, valueTarget });
+    // Sample batch and compute TD targets in main process (fast inference-only calls)
+    const batch = buf.samplePrioritized(64);
+    const gamma = this.config.ai.gamma;
+    const trainBatch = [];
+    for (const entry of batch) {
+      let valueTarget;
+      if (entry.isTerminal) {
+        valueTarget = entry.reward;
+      } else {
+        // Single predict call — fast, doesn't block like training does
+        const nextValue = await getStateValue(this.models[name], entry.next_board);
+        valueTarget = entry.reward + gamma * nextValue;
       }
-      const result = await train(this.models[name], trainBatch, { lr: 0.0005, epochs: 5, gamma });
-      this.lossHistory[name].push(result.loss);
-      if (this.lossHistory[name].length > 1000) this.lossHistory[name].shift();
-      tick++;
-      if (tick % 10 === 0) this.io.emit('train', { model: name, loss: result.loss });
-      if (tick % 50 === 0) console.log(`[Training] ${name} iteration ${tick}, loss: ${result.loss.toFixed(4)}`);
-      const elapsed = Math.floor((Date.now() - startTime) / 1000);
-      if (tick % 50 === 0) this.io.emit('trainingStatus', { active: true, model: name, timeLeft: Math.max(0, 20 - elapsed) });
+      trainBatch.push({ ...entry, valueTarget });
     }
-    const finalLoss = this.lossHistory[name].length > 0 ? this.lossHistory[name][this.lossHistory[name].length - 1] : 0;
-    console.log(`[Training] ${name} complete (${tick} iters, ${Date.now() - startTime}ms), loss: ${finalLoss.toFixed(4)}, eps: ${this._runtimeEpsilon[name].toFixed(4)}`);
-    
-    // Reset statsSinceLastTrain at END of training
+
+    console.log(`[Training] Starting training for ${name}, buffer size: ${buf.size()}, targets: ${trainBatch.length}`);
+    this.io.emit('trainingStatus', { active: true, model: name, timeLeft: 20 });
+
+    const weightsPath = `models/${name}.json`;
+    const result = await this.workers[name].train(trainBatch, {
+      lr: 0.0005,
+      gamma,
+      epochs: 5,
+      subBatchSize: 16,
+      weightsPath
+    });
+
+    this.lossHistory[name].push(result.loss || 0);
+    if (this.lossHistory[name].length > 1000) this.lossHistory[name].shift();
+
+    // Sync trained weights back to inference model after each training session
+    try {
+      await this.workers[name].syncWeightsTo(this.models[name]);
+    } catch (e) {
+      console.error(`[Trainer] Weight sync failed for ${name}:`, e);
+    }
+
+    this.io.emit('train', { model: name, loss: result.loss || 0, done: true });
+    this.io.emit('trainingStatus', { active: false, model: name, timeLeft: 0 });
+    console.log(`[Training] ${name} complete: loss=${(result.loss || 0).toFixed(4)}, iters=${result.iters}`);
+
     this.statsSinceLastTrain[name] = { wins: 0, losses: 0, draws: 0 };
     this.statsSinceLastTrain.minimax = { wins: 0, losses: 0, draws: 0 };
-    
-    this.io.emit('trainingStatus', { active: false, model: name, timeLeft: 0 });
-    this.io.emit('train', { model: name, loss: finalLoss, done: true });
-    this._emitStatus(); // Emit updated stats with reset statsSinceLastTrain
+
     this._trainCount++;
     if (this._trainCount % 5 === 0) {
       console.log(`[Training] Saving checkpoint (every 5th training, count: ${this._trainCount})`);
@@ -160,6 +303,7 @@ class SelfPlay {
     }
   }
 
+  // ── Game loop ──────────────────────────────────────────────────────
   async _startGameLoop() {
     const matchups = [
       { white: 'agresor', black: 'forteca', idx: 0, h2hKey: 'agresor_vs_forteca' },
@@ -173,13 +317,9 @@ class SelfPlay {
       this.round++;
       const warmup = this.config.ai.warmupRounds || 0;
       const warmupEps = this.config.ai.warmupEpsilon ?? 1.0;
-      // During warmup rounds: max exploration
       if (this.round <= warmup) {
-        for (const name of ['agresor', 'forteca']) {
-          this._runtimeEpsilon[name] = warmupEps;
-        }
+        for (const name of ['agresor', 'forteca']) this._runtimeEpsilon[name] = warmupEps;
       } else {
-        // After warmup: normal decay
         for (const name of ['agresor', 'forteca']) {
           const strat = this.config.ai.strategies[name];
           this._runtimeEpsilon[name] = Math.max(this._runtimeEpsilon[name] - strat.epsilonDecay, strat.minEpsilon);
@@ -192,8 +332,8 @@ class SelfPlay {
         await this._playSingleGame(matchup);
       }
       this.io.emit('roundComplete', { round: this.round, elo: { ...this.elo }, stats: { ...this.stats }, statsSinceLastTrain: { ...this.statsSinceLastTrain }, epsilon: { ...this._runtimeEpsilon } });
-      // Save checkpoint after each round (meta.json + buffers)
       this.saveCheckpoint();
+      this._saveHistorySnapshot();
     }
   }
 
@@ -203,7 +343,7 @@ class SelfPlay {
     while (this.active && !state.gameOver) {
       const isWhite = state.turn === 'white';
       const strategyName = isWhite ? matchup.white : matchup.black;
-      const boardBefore = [...state.board]; // Clone board before move
+      const boardBefore = [...state.board];
       let chosenMove;
       if (strategyName === 'minimax') {
         const result = await localFetch('/api/engine/best-move', 'POST', { depth: this.config.minimax.depth });
@@ -229,10 +369,8 @@ class SelfPlay {
           const fromArr = Array.isArray(chosenMove.from) ? chosenMove.from : [chosenMove.from.row, chosenMove.from.col];
           const toArr = Array.isArray(chosenMove.to) ? chosenMove.to : [chosenMove.to.row, chosenMove.to.col];
           state = await localFetch('/api/move', 'POST', { from: fromArr, to: toArr });
-          // Compute reward AFTER move using boardBefore and boardAfter
           if (strategyName !== 'minimax') {
             const reward = computeReward(strategyName, boardBefore, state.board, chosenMove, this.config);
-            // Model always trains from its own "white" perspective
             const trainBoard = isWhite ? boardBefore : flipBoardInput(boardBefore);
             const trainNextBoard = isWhite ? state.board : flipBoardInput(state.board);
             this.buffers[strategyName].add({ board: trainBoard, from: chosenMove.from, to: chosenMove.to, turn: 1, reward, next_board: trainNextBoard, isTerminal: state.gameOver });
@@ -249,20 +387,17 @@ class SelfPlay {
       if (totalDelay > 0) await delay(totalDelay);
     }
     const winner = state.winner;
-      // Add terminal reward for the last move of each DQN player
     if (moves.length > 0) {
-      const lastMove = moves[moves.length - 1];
+      const lastMove = moves[moves - 1];
       const lastStrategyName = state.turn === 'white' ? matchup.black : matchup.white;
       const lastWasWhite = lastStrategyName === matchup.white;
       if (lastStrategyName !== 'minimax') {
         const won = (winner === 'white' && lastStrategyName === matchup.white) || 
                     (winner === 'black' && lastStrategyName === matchup.black);
         const reward = computeReward(lastStrategyName, state.board, state.board, lastMove, this.config, true, won);
-        // Flip board so model always sees its own "white" perspective
         const trainBoard = lastWasWhite ? state.board : flipBoardInput(state.board);
         this.buffers[lastStrategyName].add({ board: trainBoard, from: lastMove.from, to: lastMove.to, turn: 1, reward, next_board: trainBoard, isTerminal: true });
       }
-      // Also add terminal reward for the opponent (who lost)
       const oppStrategyName = state.turn === 'white' ? matchup.white : matchup.black;
       const oppWasWhite = oppStrategyName === matchup.white;
       if (oppStrategyName !== 'minimax') {
@@ -274,35 +409,31 @@ class SelfPlay {
       }
     }
     
-    // Record H2H result
     if (this.h2h[matchup.h2hKey]) {
       const h = this.h2h[matchup.h2hKey];
-      if (winner === 'white') { h.whiteWins++; }
-      else if (winner === 'black') { h.blackWins++; }
-      else { h.draws++; }
+      if (winner === 'white') h.whiteWins++;
+      else if (winner === 'black') h.blackWins++;
+      else h.draws++;
     }
 
     if (winner === 'white') {
       this.stats[matchup.white].wins++; this.stats[matchup.black].losses++;
       this.statsSinceLastTrain[matchup.white].wins++; this.statsSinceLastTrain[matchup.black].losses++;
-      const whiteEloBefore = this.elo[matchup.white];
-      const blackEloBefore = this.elo[matchup.black];
-      this.elo[matchup.white] = updateElo(whiteEloBefore, blackEloBefore, 1);
-      this.elo[matchup.black] = updateElo(blackEloBefore, whiteEloBefore, 0);
+      const we = this.elo[matchup.white], be = this.elo[matchup.black];
+      this.elo[matchup.white] = updateElo(we, be, 1);
+      this.elo[matchup.black] = updateElo(be, we, 0);
     } else if (winner === 'black') {
       this.stats[matchup.black].wins++; this.stats[matchup.white].losses++;
       this.statsSinceLastTrain[matchup.black].wins++; this.statsSinceLastTrain[matchup.white].losses++;
-      const whiteEloBefore = this.elo[matchup.white];
-      const blackEloBefore = this.elo[matchup.black];
-      this.elo[matchup.black] = updateElo(blackEloBefore, whiteEloBefore, 1);
-      this.elo[matchup.white] = updateElo(whiteEloBefore, blackEloBefore, 0);
+      const we = this.elo[matchup.white], be = this.elo[matchup.black];
+      this.elo[matchup.black] = updateElo(be, we, 1);
+      this.elo[matchup.white] = updateElo(we, be, 0);
     } else {
       this.stats[matchup.white].draws++; this.stats[matchup.black].draws++;
       this.statsSinceLastTrain[matchup.white].draws++; this.statsSinceLastTrain[matchup.black].draws++;
-      const whiteEloBefore = this.elo[matchup.white];
-      const blackEloBefore = this.elo[matchup.black];
-      this.elo[matchup.white] = updateElo(whiteEloBefore, blackEloBefore, 0.5);
-      this.elo[matchup.black] = updateElo(blackEloBefore, whiteEloBefore, 0.5);
+      const we = this.elo[matchup.white], be = this.elo[matchup.black];
+      this.elo[matchup.white] = updateElo(we, be, 0.5);
+      this.elo[matchup.black] = updateElo(be, we, 0.5);
     }
     this._emitStatus();
     const winnerName = winner === 'white' ? matchup.white.charAt(0).toUpperCase() + matchup.white.slice(1) :
@@ -310,54 +441,54 @@ class SelfPlay {
     this.io.emit('gameOver', { game: matchup.idx + 1, winner: winnerName || 'draw', moves: moves.length });
   }
 
+  // ── Checkpoints ─────────────────────────────────────────────────────
   saveCheckpoint() {
     try {
-      const fs = require('fs');
       const meta = { round: this.round, elo: this.elo, stats: this.stats, statsSinceLastTrain: this.statsSinceLastTrain, paramsVersion: this.paramsVersion, epsilon: this._runtimeEpsilon, h2h: this.h2h };
       if (!fs.existsSync('models')) fs.mkdirSync('models', { recursive: true });
       if (!fs.existsSync('data')) fs.mkdirSync('data', { recursive: true });
       fs.writeFileSync('models/meta.json', JSON.stringify(meta, null, 2));
       this.buffers.agresor.save('data/buffer_agresor.json');
       this.buffers.forteca.save('data/buffer_forteca.json');
-    } catch (e) { console.error('Checkpoint save error:', e.message); }
+    } catch (e) { console.error('Checkpoint save error:', e); }
+  }
+
+  _saveHistorySnapshot() {
+    try {
+      const dataDir = path.join(__dirname, '..', '..', 'data');
+      if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+      const historyFile = path.join(dataDir, 'history.jsonl');
+      const snapshot = {
+        timestamp: new Date().toISOString(),
+        round: this.round,
+        elo: { ...this.elo },
+        epsilon: { ...this._runtimeEpsilon },
+        bufferSize: { agresor: this.buffers.agresor.size(), forteca: this.buffers.forteca.size() },
+        stats: { ...this.stats },
+        statsSinceLastTrain: { ...this.statsSinceLastTrain },
+        h2h: JSON.parse(JSON.stringify(this.h2h))
+      };
+      fs.appendFileSync(historyFile, JSON.stringify(snapshot) + '\n');
+      let lines = fs.readFileSync(historyFile, 'utf8').trim().split('\n');
+      if (lines.length > 50) {
+        lines = lines.slice(-50);
+        fs.writeFileSync(historyFile, lines.join('\n') + '\n');
+      }
+    } catch (e) { console.error('History snapshot error:', e); }
   }
 
   loadCheckpoint() {
     try {
-      const fs = require('fs');
       if (fs.existsSync('models/meta.json')) {
         const meta = JSON.parse(fs.readFileSync('models/meta.json', 'utf8'));
         this.round = meta.round || 0;
         this.elo = meta.elo || this.elo;
-        
-        // Handle both old format (agresor_vs_forteca) and new format (agresor/forteca/minimax)
         const loadedStats = meta.stats || {};
-        if (loadedStats.agresor && loadedStats.forteca && loadedStats.minimax) {
-          // New format - use as-is
-          this.stats = loadedStats;
-        } else {
-          // Old format or missing - use defaults
-          this.stats = {
-            agresor: { wins: 0, losses: 0, draws: 0 },
-            forteca: { wins: 0, losses: 0, draws: 0 },
-            minimax: { wins: 0, losses: 0, draws: 0 }
-          };
-        }
-        
-        const loadedStatsSince = meta.statsSinceLastTrain || {};
-        if (loadedStatsSince.agresor && loadedStatsSince.forteca && loadedStatsSince.minimax) {
-          this.statsSinceLastTrain = loadedStatsSince;
-        } else {
-          this.statsSinceLastTrain = {
-            agresor: { wins: 0, losses: 0, draws: 0 },
-            forteca: { wins: 0, losses: 0, draws: 0 },
-            minimax: { wins: 0, losses: 0, draws: 0 }
-          };
-        }
-        
+        if (loadedStats.agresor && loadedStats.forteca && loadedStats.minimax) this.stats = loadedStats;
+        const loadedTS = meta.statsSinceLastTrain || {};
+        if (loadedTS.agresor && loadedTS.forteca && loadedTS.minimax) this.statsSinceLastTrain = loadedTS;
         this.paramsVersion = meta.paramsVersion || 0;
         this._runtimeEpsilon = meta.epsilon || { agresor: 0.3, forteca: 0.3 };
-        // Load H2H stats or init defaults
         const loadedH2h = meta.h2h || {};
         const defaultH2h = {
           agresor_vs_forteca:   { whiteWins: 0, blackWins: 0, draws: 0 },
@@ -373,7 +504,7 @@ class SelfPlay {
         this.buffers.agresor.load('data/buffer_agresor.json');
         this.buffers.forteca.load('data/buffer_forteca.json');
       }
-    } catch (e) { console.error('Checkpoint load error:', e.message); }
+    } catch (e) { console.error('Checkpoint load error:', e); }
   }
 
   reset() {
@@ -381,14 +512,7 @@ class SelfPlay {
     this.elo = { agresor: 1500, forteca: 1500, minimax: 1500 };
     this.stats = { agresor: { wins: 0, losses: 0, draws: 0 }, forteca: { wins: 0, losses: 0, draws: 0 }, minimax: { wins: 0, losses: 0, draws: 0 } };
     this.statsSinceLastTrain = { agresor: { wins: 0, losses: 0, draws: 0 }, forteca: { wins: 0, losses: 0, draws: 0 }, minimax: { wins: 0, losses: 0, draws: 0 } };
-    this.h2h = {
-      agresor_vs_forteca:   { whiteWins: 0, blackWins: 0, draws: 0 },
-      forteca_vs_agresor:   { whiteWins: 0, blackWins: 0, draws: 0 },
-      agresor_vs_minimax:   { whiteWins: 0, blackWins: 0, draws: 0 },
-      minimax_vs_agresor:   { whiteWins: 0, blackWins: 0, draws: 0 },
-      forteca_vs_minimax:   { whiteWins: 0, blackWins: 0, draws: 0 },
-      minimax_vs_forteca:   { whiteWins: 0, blackWins: 0, draws: 0 }
-    };
+    this.h2h = { agresor_vs_forteca: { whiteWins: 0, blackWins: 0, draws: 0 }, forteca_vs_agresor: { whiteWins: 0, blackWins: 0, draws: 0 }, agresor_vs_minimax: { whiteWins: 0, blackWins: 0, draws: 0 }, minimax_vs_agresor: { whiteWins: 0, blackWins: 0, draws: 0 }, forteca_vs_minimax: { whiteWins: 0, blackWins: 0, draws: 0 }, minimax_vs_forteca: { whiteWins: 0, blackWins: 0, draws: 0 } };
     this.lossHistory = { agresor: [], forteca: [] };
     this.buffers.agresor.clear(); this.buffers.forteca.clear();
     disposeModel(this.models.agresor); disposeModel(this.models.forteca);
