@@ -388,7 +388,7 @@ class SelfPlay {
     }
     const winner = state.winner;
     if (moves.length > 0) {
-      const lastMove = moves[moves - 1];
+      const lastMove = moves[moves.length - 1];
       const lastStrategyName = state.turn === 'white' ? matchup.black : matchup.white;
       const lastWasWhite = lastStrategyName === matchup.white;
       if (lastStrategyName !== 'minimax') {
